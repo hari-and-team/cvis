@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CVIS icon">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="100%" stop-color="#22d3a5" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#0a0e1a" stroke="#1e2d4a" stroke-width="2" />
+  <path d="M39 20h6a1 1 0 0 1 0 2h-6a1 1 0 0 1 0-2Zm0 6h6a1 1 0 0 1 0 2h-6a1 1 0 0 1 0-2Zm0 6h6a1 1 0 0 1 0 2h-6a1 1 0 0 1 0-2Z" fill="#7a95b8" />
+  <path d="M24 18c-6.6 0-12 5.4-12 12v4c0 6.6 5.4 12 12 12h7a1 1 0 0 0 0-2h-7c-5.5 0-10-4.5-10-10v-4c0-5.5 4.5-10 10-10h7a1 1 0 0 0 0-2h-7Z" fill="url(#g)" />
+  <path d="M26 24h8a1 1 0 0 1 0 2h-8a1 1 0 0 1 0-2Zm0 6h8a1 1 0 0 1 0 2h-8a1 1 0 0 1 0-2Zm0 6h8a1 1 0 0 1 0 2h-8a1 1 0 0 1 0-2Z" fill="#c8daf4" />
+</svg>

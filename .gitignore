@@ -4,9 +4,11 @@ node_modules/
 # Build output
 dist/
 build/
+.svelte-kit/
 
 # Vite
 .vite/
+vite.config.ts.timestamp-*.mjs
 
 # Logs
 npm-debug.log*

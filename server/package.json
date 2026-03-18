@@ -1,0 +1,15 @@
+{
+  "name": "cvis-backend",
+  "version": "1.0.0",
+  "description": "Express backend for C DSA Visualizer with GCC compilation",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "fs-extra": "^11.2.0"
+  }
+}
