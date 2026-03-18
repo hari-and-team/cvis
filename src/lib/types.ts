@@ -50,8 +50,22 @@ export interface TraceResult {
 }
 
 // ===== CODE ANALYSIS =====
+export type TokenType = 
+  | 'preprocessor'  // #include, #define, etc.
+  | 'type'          // int, float, char, void, struct, etc.
+  | 'keyword'       // if, return, for, while, etc.
+  | 'stdlib'        // printf, scanf, malloc, etc.
+  | 'function'      // user function calls (identifier before '(')
+  | 'identifier'    // variable names
+  | 'number'        // 42, 3.14, 0xFF
+  | 'string'        // "hello", 'a'
+  | 'operator'      // +, -, ->, ==, ;, etc.
+  | 'comment'       // // and /* */
+  | 'whitespace'    // spaces, tabs, newlines
+  | 'unknown';      // unrecognized
+
 export interface CodeToken {
-  type: 'keyword' | 'identifier' | 'number' | 'string' | 'operator' | 'comment' | 'unknown';
+  type: TokenType;
   value: string;
   line: number;
   column: number;

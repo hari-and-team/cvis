@@ -1,299 +1,315 @@
-import type { CodeToken } from './types';
+import type { CodeToken, TokenType } from './types';
+
+// ============================================================================
+// TOKEN CLASSIFICATION SETS
+// ============================================================================
+
+const TYPE_KEYWORDS = new Set([
+  'int', 'float', 'double', 'char', 'void', 'long', 'short',
+  'unsigned', 'signed', 'struct', 'union', 'enum', 'typedef',
+  'const', 'static', 'extern', 'register', 'volatile', 'auto'
+]);
+
+const CONTROL_KEYWORDS = new Set([
+  'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default',
+  'break', 'continue', 'return', 'goto', 'sizeof', 'NULL'
+]);
+
+const STDLIB_FUNCTIONS = new Set([
+  // stdio.h
+  'printf', 'scanf', 'fprintf', 'fscanf', 'sprintf', 'sscanf',
+  'fopen', 'fclose', 'fread', 'fwrite', 'fgets', 'fputs',
+  'getchar', 'putchar', 'gets', 'puts', 'fgetc', 'fputc',
+  'fseek', 'ftell', 'rewind', 'feof', 'ferror', 'perror',
+  // stdlib.h
+  'malloc', 'calloc', 'realloc', 'free', 'exit', 'abort',
+  'atoi', 'atof', 'atol', 'strtol', 'strtod', 'rand', 'srand',
+  'abs', 'labs', 'qsort', 'bsearch', 'system', 'getenv',
+  // string.h
+  'strlen', 'strcpy', 'strncpy', 'strcat', 'strncat',
+  'strcmp', 'strncmp', 'strchr', 'strrchr', 'strstr',
+  'memset', 'memcpy', 'memmove', 'memcmp',
+  // math.h
+  'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
+  'sinh', 'cosh', 'tanh', 'exp', 'log', 'log10', 'pow', 'sqrt',
+  'ceil', 'floor', 'fabs', 'fmod',
+  // ctype.h
+  'isalpha', 'isdigit', 'isalnum', 'isspace', 'isupper', 'islower',
+  'toupper', 'tolower'
+]);
+
+const TWO_CHAR_OPERATORS = new Set([
+  '==', '!=', '<=', '>=', '&&', '||', '++', '--',
+  '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=',
+  '<<', '>>', '->'
+]);
+
+const SINGLE_CHAR_OPERATORS = new Set([
+  '+', '-', '*', '/', '%', '<', '>', '=', '!', '&', '|', '^', '~',
+  '?', ':', ';', ',', '.', '(', ')', '[', ']', '{', '}'
+]);
+
+// ============================================================================
+// TOKENIZER - Finite State Machine
+// ============================================================================
 
 export function tokenize(code: string): CodeToken[] {
   const tokens: CodeToken[] = [];
   if (!code) return tokens;
 
-  const KEYWORDS = new Set([
-    "int", "float", "double", "char", "void", "return", "if", "else", "while", "for",
-    "do", "switch", "case", "break", "continue", "struct", "typedef", "sizeof", "long", 
-    "short", "unsigned", "signed", "const", "static", "NULL"
-  ]);
-
-  let lineNo = 1;
-  let colNo = 1;
   let i = 0;
+  let line = 1;
+  let col = 1;
+
+  const peek = (offset = 0): string => code[i + offset] || '';
+  const advance = (): string => {
+    const ch = code[i++];
+    if (ch === '\n') {
+      line++;
+      col = 1;
+    } else {
+      col++;
+    }
+    return ch;
+  };
+
+  const addToken = (type: TokenType, value: string, startLine: number, startCol: number) => {
+    tokens.push({ type, value, line: startLine, column: startCol });
+  };
 
   while (i < code.length) {
-    const ch = code[i];
-    const startCol = colNo;
+    const ch = peek();
+    const startLine = line;
+    const startCol = col;
 
-    // Newline
-    if (ch === '\n') {
-      lineNo++;
-      colNo = 1;
-      i++;
-      continue;
-    }
-
-    // Whitespace (excluding newline)
-    if (ch === ' ' || ch === '\t' || ch === '\r') {
-      colNo++;
-      i++;
-      continue;
-    }
-
-    // Single-line comment
-    if (ch === '/' && code[i + 1] === '/') {
-      const start = i;
-      while (i < code.length && code[i] !== '\n') {
-        i++;
+    // === WHITESPACE ===
+    if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') {
+      let ws = '';
+      while (i < code.length && (peek() === ' ' || peek() === '\t' || peek() === '\r' || peek() === '\n')) {
+        ws += advance();
       }
-      tokens.push({
-        type: 'comment',
-        value: code.substring(start, i),
-        line: lineNo,
-        column: startCol
-      });
+      addToken('whitespace', ws, startLine, startCol);
       continue;
     }
 
-    // Multi-line comment
-    if (ch === '/' && code[i + 1] === '*') {
-      const start = i;
-      const startLine = lineNo;
-      i += 2;
-      colNo += 2;
-      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) {
-        if (code[i] === '\n') {
-          lineNo++;
-          colNo = 1;
-        } else {
-          colNo++;
-        }
-        i++;
+    // === PREPROCESSOR DIRECTIVE ===
+    if (ch === '#' && (startCol === 1 || tokens.length === 0 || tokens[tokens.length - 1].value.includes('\n'))) {
+      let directive = '';
+      while (i < code.length && peek() !== '\n') {
+        directive += advance();
       }
-      i += 2;
-      colNo += 2;
-      tokens.push({
-        type: 'comment',
-        value: code.substring(start, i),
-        line: startLine,
-        column: startCol
-      });
+      addToken('preprocessor', directive, startLine, startCol);
       continue;
     }
 
-    // String literals
+    // === SINGLE-LINE COMMENT ===
+    if (ch === '/' && peek(1) === '/') {
+      let comment = '';
+      while (i < code.length && peek() !== '\n') {
+        comment += advance();
+      }
+      addToken('comment', comment, startLine, startCol);
+      continue;
+    }
+
+    // === MULTI-LINE COMMENT ===
+    if (ch === '/' && peek(1) === '*') {
+      let comment = advance() + advance(); // consume /*
+      while (i < code.length && !(peek() === '*' && peek(1) === '/')) {
+        comment += advance();
+      }
+      if (i < code.length) {
+        comment += advance() + advance(); // consume */
+      }
+      addToken('comment', comment, startLine, startCol);
+      continue;
+    }
+
+    // === STRING LITERAL ===
     if (ch === '"') {
-      const start = i;
-      i++;
-      colNo++;
-      while (i < code.length && code[i] !== '"') {
-        if (code[i] === '\\') {
-          i++;
-          colNo++;
+      let str = advance(); // opening quote
+      while (i < code.length && peek() !== '"') {
+        if (peek() === '\\' && i + 1 < code.length) {
+          str += advance(); // backslash
         }
-        if (i < code.length) {
-          if (code[i] === '\n') {
-            lineNo++;
-            colNo = 1;
-          } else {
-            colNo++;
-          }
-          i++;
-        }
+        str += advance();
       }
-      i++; // closing quote
-      colNo++;
-      tokens.push({
-        type: 'string',
-        value: code.substring(start, i),
-        line: lineNo,
-        column: startCol
-      });
+      if (i < code.length) {
+        str += advance(); // closing quote
+      }
+      addToken('string', str, startLine, startCol);
       continue;
     }
 
-    // Character literals
+    // === CHARACTER LITERAL ===
     if (ch === "'") {
-      const start = i;
-      i++;
-      colNo++;
-      while (i < code.length && code[i] !== "'") {
-        if (code[i] === '\\') {
-          i++;
-          colNo++;
+      let charLit = advance(); // opening quote
+      while (i < code.length && peek() !== "'") {
+        if (peek() === '\\' && i + 1 < code.length) {
+          charLit += advance(); // backslash
         }
-        if (i < code.length) {
-          colNo++;
-          i++;
-        }
+        charLit += advance();
       }
-      i++; // closing quote
-      colNo++;
-      tokens.push({
-        type: 'string',
-        value: code.substring(start, i),
-        line: lineNo,
-        column: startCol
-      });
+      if (i < code.length) {
+        charLit += advance(); // closing quote
+      }
+      addToken('string', charLit, startLine, startCol);
       continue;
     }
 
-    // Numbers
-    if (/[0-9]/.test(ch) || (ch === '.' && /[0-9]/.test(code[i + 1] || ''))) {
-      const start = i;
-      while (i < code.length && /[0-9a-fA-FxX._eE]/.test(code[i])) {
-        colNo++;
-        i++;
+    // === NUMBER ===
+    if (/[0-9]/.test(ch) || (ch === '.' && /[0-9]/.test(peek(1)))) {
+      let num = '';
+      // Hex prefix
+      if (ch === '0' && (peek(1) === 'x' || peek(1) === 'X')) {
+        num += advance() + advance();
+        while (i < code.length && /[0-9a-fA-F]/.test(peek())) {
+          num += advance();
+        }
+      } else {
+        // Decimal/float
+        while (i < code.length && /[0-9]/.test(peek())) {
+          num += advance();
+        }
+        // Decimal point
+        if (peek() === '.' && /[0-9]/.test(peek(1))) {
+          num += advance();
+          while (i < code.length && /[0-9]/.test(peek())) {
+            num += advance();
+          }
+        }
+        // Exponent
+        if (peek() === 'e' || peek() === 'E') {
+          num += advance();
+          if (peek() === '+' || peek() === '-') {
+            num += advance();
+          }
+          while (i < code.length && /[0-9]/.test(peek())) {
+            num += advance();
+          }
+        }
       }
-      tokens.push({
-        type: 'number',
-        value: code.substring(start, i),
-        line: lineNo,
-        column: startCol
-      });
+      // Suffix (f, F, l, L, u, U, ll, LL)
+      while (i < code.length && /[fFlLuU]/.test(peek())) {
+        num += advance();
+      }
+      addToken('number', num, startLine, startCol);
       continue;
     }
 
-    // Identifiers and keywords
+    // === IDENTIFIER / KEYWORD ===
     if (/[a-zA-Z_]/.test(ch)) {
-      const start = i;
-      while (i < code.length && /[a-zA-Z0-9_]/.test(code[i])) {
-        colNo++;
-        i++;
+      let ident = '';
+      while (i < code.length && /[a-zA-Z0-9_]/.test(peek())) {
+        ident += advance();
       }
-      const value = code.substring(start, i);
-      tokens.push({
-        type: KEYWORDS.has(value) ? 'keyword' : 'identifier',
-        value,
-        line: lineNo,
-        column: startCol
-      });
+      
+      // Determine token type
+      let type: TokenType;
+      if (TYPE_KEYWORDS.has(ident)) {
+        type = 'type';
+      } else if (CONTROL_KEYWORDS.has(ident)) {
+        type = 'keyword';
+      } else if (STDLIB_FUNCTIONS.has(ident)) {
+        type = 'stdlib';
+      } else {
+        // Check if followed by '(' to mark as function
+        let lookAhead = i;
+        while (lookAhead < code.length && (code[lookAhead] === ' ' || code[lookAhead] === '\t')) {
+          lookAhead++;
+        }
+        if (code[lookAhead] === '(') {
+          type = 'function';
+        } else {
+          type = 'identifier';
+        }
+      }
+      
+      addToken(type, ident, startLine, startCol);
       continue;
     }
 
-    // Operators and punctuation
-    const twoChar = code.substring(i, i + 2);
-    const TWO_CHAR_OPS = [
-      "==", "!=", "<=", ">=", "&&", "||", "++", "--", 
-      "+=", "-=", "*=", "/=", "%=", "->", "<<", ">>"
-    ];
-    
-    if (TWO_CHAR_OPS.includes(twoChar)) {
-      tokens.push({
-        type: 'operator',
-        value: twoChar,
-        line: lineNo,
-        column: startCol
-      });
-      i += 2;
-      colNo += 2;
+    // === TWO-CHAR OPERATOR ===
+    const twoChar = ch + peek(1);
+    if (TWO_CHAR_OPERATORS.has(twoChar)) {
+      advance();
+      advance();
+      addToken('operator', twoChar, startLine, startCol);
       continue;
     }
 
-    // Single character operators
-    if ("+-*/%<>=!&|^~?:;,.()[]{}".includes(ch)) {
-      tokens.push({
-        type: 'operator',
-        value: ch,
-        line: lineNo,
-        column: startCol
-      });
-      i++;
-      colNo++;
+    // === SINGLE-CHAR OPERATOR ===
+    if (SINGLE_CHAR_OPERATORS.has(ch)) {
+      advance();
+      addToken('operator', ch, startLine, startCol);
       continue;
     }
 
-    // Unknown character
-    tokens.push({
-      type: 'unknown',
-      value: ch,
-      line: lineNo,
-      column: startCol
-    });
-    i++;
-    colNo++;
+    // === UNKNOWN ===
+    addToken('unknown', advance(), startLine, startCol);
   }
 
   return tokens;
 }
 
-// One Dark Pro syntax highlighting colors
-const COLORS = {
-  comment: '#5c6370',      // Gray (italic)
-  preprocessor: '#c678dd', // Purple
-  string: '#98c379',       // Green
-  number: '#d19a66',       // Orange
-  keyword: '#c678dd',      // Purple
-  type: '#e5c07b',         // Yellow (for types like int, float)
-  function: '#61afef',     // Blue
-  stdLib: '#56b6c2',       // Cyan
-} as const;
+// ============================================================================
+// ONE DARK PRO COLOR MAPPING
+// ============================================================================
+
+const TOKEN_COLORS: Record<TokenType, { color: string; italic?: boolean; bold?: boolean }> = {
+  preprocessor: { color: '#c678dd' },           // Purple
+  type:         { color: '#e5c07b' },           // Yellow
+  keyword:      { color: '#c678dd' },           // Purple
+  stdlib:       { color: '#56b6c2' },           // Cyan
+  function:     { color: '#61afef' },           // Blue
+  identifier:   { color: '#e5e5e5' },           // Bright text
+  number:       { color: '#d19a66' },           // Orange
+  string:       { color: '#98c379' },           // Green
+  operator:     { color: '#abb2bf' },           // Normal text
+  comment:      { color: '#5c6370', italic: true }, // Gray italic
+  whitespace:   { color: '' },                  // No styling
+  unknown:      { color: '#e06c75' },           // Red (error)
+};
+
+// ============================================================================
+// HTML RENDERER
+// ============================================================================
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderToken(token: CodeToken): string {
+  const escaped = escapeHtml(token.value);
+  
+  if (token.type === 'whitespace') {
+    return escaped; // No span wrapper for whitespace
+  }
+  
+  const style = TOKEN_COLORS[token.type];
+  if (!style.color) {
+    return escaped;
+  }
+  
+  let styleStr = `color:${style.color}`;
+  if (style.italic) styleStr += ';font-style:italic';
+  if (style.bold) styleStr += ';font-weight:bold';
+  
+  return `<span style="${styleStr}">${escaped}</span>`;
+}
+
+// ============================================================================
+// MAIN HIGHLIGHT FUNCTION
+// ============================================================================
 
 export default function highlight(code: string): string {
-  if (!code) return "";
+  if (!code) return '';
   
-  // Escape HTML entities
-  let s = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const tokens = tokenize(code);
+  const html = tokens.map(renderToken).join('');
   
-  // Use unique placeholder markers that won't conflict
-  const placeholders: Map<string, string> = new Map();
-  let placeholderIndex = 0;
-  
-  const addPlaceholder = (html: string): string => {
-    const key = `\x00PH${placeholderIndex++}PH\x00`;
-    placeholders.set(key, html);
-    return key;
-  };
-
-  // Order matters: process tokens that could contain other tokens first
-  
-  // 1. Comments (must be first - they can contain anything)
-  s = s.replace(/(\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g, (m) => 
-    addPlaceholder(`<span style="color:${COLORS.comment};font-style:italic">${m}</span>`)
-  );
-
-  // 2. Preprocessor directives (can contain strings and other tokens)
-  s = s.replace(/^(#[^\n]*)/gm, (m) => 
-    addPlaceholder(`<span style="color:${COLORS.preprocessor}">${m}</span>`)
-  );
-
-  // 3. String literals
-  s = s.replace(/("(?:[^"\\]|\\.)*")/g, (m) => 
-    addPlaceholder(`<span style="color:${COLORS.string}">${m}</span>`)
-  );
-
-  // 4. Character literals
-  s = s.replace(/('(?:[^'\\]|\\.)*')/g, (m) => 
-    addPlaceholder(`<span style="color:${COLORS.string}">${m}</span>`)
-  );
-
-  // 5. Numbers (before keywords to avoid conflicts)
-  s = s.replace(/\b(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[fFlLuU]*)\b/g, (m) => 
-    addPlaceholder(`<span style="color:${COLORS.number}">${m}</span>`)
-  );
-
-  // 6. Standard library functions (before generic function calls)
-  s = s.replace(
-    /\b(printf|scanf|fprintf|putchar|puts|malloc|calloc|realloc|free|abs|sqrt|strlen|pow|rand|srand|atoi|strcmp|strcpy|strcat|memset|memcpy|fopen|fclose|fread|fwrite|getchar|exit)\b/g,
-    (m) => addPlaceholder(`<span style="color:${COLORS.stdLib}">${m}</span>`)
-  );
-
-  // 7. Type keywords (yellow)
-  s = s.replace(
-    /\b(int|float|double|char|void|long|short|unsigned|signed|struct|typedef|const|static)\b/g,
-    (m) => addPlaceholder(`<span style="color:${COLORS.type}">${m}</span>`)
-  );
-
-  // 8. Control flow keywords (purple)
-  s = s.replace(
-    /\b(return|if|else|while|for|do|switch|case|break|continue|sizeof|NULL|default)\b/g,
-    (m) => addPlaceholder(`<span style="color:${COLORS.keyword}">${m}</span>`)
-  );
-
-  // 9. Function calls - identifiers followed by ( but not already highlighted
-  s = s.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, (match) => {
-    // Don't re-highlight if already in a placeholder
-    if (match.includes('\x00')) return match;
-    return addPlaceholder(`<span style="color:${COLORS.function}">${match}</span>`);
-  });
-
-  // Restore all placeholders
-  for (const [key, value] of placeholders) {
-    s = s.split(key).join(value);
-  }
-
-  return s + "\n";
+  return html + '\n';
 }
