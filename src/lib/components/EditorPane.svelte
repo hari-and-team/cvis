@@ -1,10 +1,8 @@
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, Cpu, FileText, Loader2, SkipBack, SkipForward } from 'lucide-svelte';
+  import { ChevronLeft, ChevronRight, Cpu, FileText, Loader2, SkipBack, SkipForward, Play, Pause } from 'lucide-svelte';
   import { createEventDispatcher, onMount } from 'svelte';
   import highlight from '$lib/highlight';
-  import { TH } from '$lib/theme';
   import { currentStepIndex, editorCode, isPlaying, traceSteps } from '$lib/stores';
-  import { buildControlButtonStyle, EDITOR_MONO } from './editor-pane-config';
 
   const dispatch = createEventDispatcher<{
     trace: void;
@@ -109,37 +107,38 @@
   });
 </script>
 
-<div style="width: 50%; display: flex; flex-direction: column; border-right: 1px solid {TH.border};">
-  <div
-    style="display: flex; align-items: center; padding: 5px 10px; background: {TH.bgCard}; border-bottom: 1px solid {TH.border}; gap: 6px;"
-  >
-    <FileText size={12} color={TH.dimText} />
-    <span style="font-family: monospace; color: {TH.bright}; font-size: 11px;">main.c</span>
+<div class="editor-pane">
+  <!-- File Tab -->
+  <div class="file-tab">
+    <div class="tab-item active">
+      <FileText size={14} />
+      <span class="tab-name">main.c</span>
+      <span class="tab-dot"></span>
+    </div>
   </div>
 
-  <div style="display: flex; flex: 1; overflow: hidden; position: relative;">
-    <div
-      bind:this={lnRef}
-      style="width: 38px; padding-top: 12px; padding-bottom: 12px; padding-right: 6px; background: {TH.bgDeep}; border-right: 1px solid {TH.border}; overflow-y: hidden; text-align: right; user-select: none; font-family: {EDITOR_MONO.fontFamily}; font-size: 11px; color: {TH.dimText};"
-    >
+  <!-- Editor Area -->
+  <div class="editor-area">
+    <!-- Line Numbers Gutter -->
+    <div bind:this={lnRef} class="line-gutter">
       {#each Array.from({ length: lineCount }, (_, i) => i) as i}
-        <div
-          style="line-height: 22px; color: {hlLine === i + 1 ? TH.accent : TH.dimText}; font-weight: {hlLine === i + 1 ? 700 : 400};"
-        >
+        <div class="line-number" class:highlighted={hlLine === i + 1}>
           {i + 1}
         </div>
       {/each}
     </div>
 
-    <div style="flex: 1; position: relative; overflow: hidden;">
+    <!-- Code Area -->
+    <div class="code-area">
       {#if hlLine}
         <div
-          style="position: absolute; left: 0; right: 0; top: {(hlLine - 1) * 22 + 12}px; height: 22px; background: {TH.accent}1e; border-left: 3px solid {TH.accent}; pointer-events: none; z-index: 2; transition: top 0.18s ease;"
+          class="current-line-highlight"
+          style="top: {(hlLine - 1) * 22 + 12}px;"
         ></div>
       {/if}
       <pre
         bind:this={preRef}
-        style="position: absolute; inset: 0; margin: 0; padding: 12px; font-family: {EDITOR_MONO.fontFamily}; font-size: {EDITOR_MONO.fontSize}; line-height: {EDITOR_MONO.lineHeight}; color: {TH.bright}; pointer-events: none; overflow: hidden; z-index: 1;"
+        class="code-display"
       >{@html highlight(code)}</pre>
       <textarea
         bind:this={taRef}
@@ -148,75 +147,83 @@
         on:keydown={onKey}
         on:scroll={syncScroll}
         spellcheck={false}
-        style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 12px; margin: 0; font-family: {EDITOR_MONO.fontFamily}; font-size: {EDITOR_MONO.fontSize}; line-height: {EDITOR_MONO.lineHeight}; background: transparent; color: transparent; caret-color: {TH.white}; resize: none; outline: none; overflow: auto; z-index: 3; border: none; tab-size: {EDITOR_MONO.tabSize};"
+        class="code-input"
       ></textarea>
     </div>
   </div>
 
-  <div style="background: {TH.bgCard}; border-top: 1px solid {TH.border}; padding: 10px; display: flex; flex-direction: column; gap: 7px; flex-shrink: 0;">
+  <!-- Trace Controls -->
+  <div class="controls-panel">
     <button
       on:click={runTrace}
       disabled={isTracing}
-      style="display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 0; background: {isTracing ? `${TH.accent}50` : TH.accent}; border: none; border-radius: 7px; color: {TH.white}; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: {isTracing ? 'not-allowed' : 'pointer'};"
+      class="trace-button"
+      class:tracing={isTracing}
     >
       {#if isTracing}
         <Loader2 size={14} class="animate-spin" />
-        Interpreting…
+        <span>Interpreting…</span>
       {:else}
         <Cpu size={14} />
-        Trace Execution
+        <span>Trace Execution</span>
       {/if}
     </button>
 
     {#if $traceSteps && $traceSteps.length > 0}
-      <div style="display: flex; gap: 5px;">
+      <div class="playback-controls">
         <button
-          on:click={() => {
-            setCurStep(0);
-            setPlaying(false);
-          }}
-          style={buildControlButtonStyle()}
+          on:click={() => { setCurStep(0); setPlaying(false); }}
+          class="ctrl-btn icon-only"
+          title="Go to start"
         >
           <SkipBack size={12} />
         </button>
         <button
           on:click={() => setCurStep((p) => Math.max(0, p - 1))}
           disabled={curStep === 0}
-          style={buildControlButtonStyle({ flex: 1, opacity: curStep === 0 ? 0.4 : 1 })}
+          class="ctrl-btn flex-1"
         >
-          <ChevronLeft size={13} />PREV
+          <ChevronLeft size={14} />
+          <span>Prev</span>
         </button>
         <button
           on:click={() => setPlaying((p) => !p)}
-          style={buildControlButtonStyle({
-            flex: 1,
-            background: playing ? `${TH.orange}18` : TH.bgRaised,
-            color: playing ? TH.orange : TH.midText
-          })}
+          class="ctrl-btn flex-1 play-btn"
+          class:playing={playing}
         >
-          {playing ? '⏸' : '▶'} {playing ? 'PAUSE' : 'PLAY'}
+          {#if playing}
+            <Pause size={12} />
+            <span>Pause</span>
+          {:else}
+            <Play size={12} />
+            <span>Play</span>
+          {/if}
         </button>
         <button
           on:click={() => setCurStep((p) => Math.min(total - 1, p + 1))}
           disabled={curStep === total - 1}
-          style={buildControlButtonStyle({ flex: 1, opacity: curStep === total - 1 ? 0.4 : 1 })}
+          class="ctrl-btn flex-1"
         >
-          NEXT<ChevronRight size={13} />
+          <span>Next</span>
+          <ChevronRight size={14} />
         </button>
         <button
-          on:click={() => {
-            setCurStep(total - 1);
-            setPlaying(false);
-          }}
-          style={buildControlButtonStyle()}
+          on:click={() => { setCurStep(total - 1); setPlaying(false); }}
+          class="ctrl-btn icon-only"
+          title="Go to end"
         >
           <SkipForward size={12} />
         </button>
       </div>
-      <div style="display: flex; align-items: center; gap: 8px;">
+
+      <!-- Progress Slider -->
+      <div class="progress-container">
         <div
-          role="button"
+          role="slider"
           tabindex="0"
+          aria-valuenow={curStep + 1}
+          aria-valuemin={1}
+          aria-valuemax={total}
           on:click={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             const x = e instanceof MouseEvent ? e.clientX : 0;
@@ -224,20 +231,348 @@
             setPlaying(false);
           }}
           on:keydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-            }
+            if (e.key === 'ArrowRight') setCurStep((p) => Math.min(total - 1, p + 1));
+            else if (e.key === 'ArrowLeft') setCurStep((p) => Math.max(0, p - 1));
           }}
-          style="flex: 1; height: 3px; background: {TH.border}; border-radius: 2px; cursor: pointer; overflow: hidden;"
+          class="progress-track"
         >
           <div
-            style="width: {((curStep + 1) / total) * 100}%; height: 100%; background: {TH.accent}; border-radius: 2px; transition: width 0.15s;"
+            class="progress-fill"
+            style="width: {((curStep + 1) / total) * 100}%;"
+          ></div>
+          <div
+            class="progress-thumb"
+            style="left: {((curStep + 1) / total) * 100}%;"
           ></div>
         </div>
-        <span style="color: {TH.dimText}; font-size: 10px; font-family: monospace; white-space: nowrap;">
-          {curStep + 1}/{total}
+        <span class="step-counter">
+          {curStep + 1} / {total}
         </span>
       </div>
     {/if}
   </div>
 </div>
+
+<style>
+  /* Editor Pane Container */
+  .editor-pane {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #3e4451;
+    background: #282c34;
+  }
+
+  /* File Tab Styling - VS Code like */
+  .file-tab {
+    display: flex;
+    align-items: stretch;
+    background: #21252b;
+    border-bottom: 1px solid #3e4451;
+    height: 35px;
+  }
+
+  .tab-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    background: #282c34;
+    border-right: 1px solid #3e4451;
+    border-top: 2px solid transparent;
+    color: #abb2bf;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .tab-item.active {
+    border-top-color: #61afef;
+  }
+
+  .tab-item:hover {
+    background: #2c313a;
+  }
+
+  .tab-name {
+    color: #e5e5e5;
+  }
+
+  .tab-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5c6370;
+    opacity: 0;
+  }
+
+  /* Editor Area */
+  .editor-area {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    background: #282c34;
+  }
+
+  /* Line Number Gutter */
+  .line-gutter {
+    width: 50px;
+    padding: 12px 0;
+    background: #21252b;
+    border-right: 1px solid #3e4451;
+    overflow-y: hidden;
+    text-align: right;
+    user-select: none;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    color: #5c6370;
+  }
+
+  .line-number {
+    line-height: 22px;
+    padding-right: 12px;
+    transition: color 0.15s ease;
+  }
+
+  .line-number.highlighted {
+    color: #61afef;
+    font-weight: 600;
+  }
+
+  /* Code Area */
+  .code-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Current Line Highlight */
+  .current-line-highlight {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 22px;
+    background: rgba(97, 175, 239, 0.08);
+    border-left: 2px solid #61afef;
+    pointer-events: none;
+    z-index: 2;
+    transition: top 0.18s ease;
+  }
+
+  /* Code Display */
+  .code-display {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 12px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 22px;
+    color: #abb2bf;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 1;
+    background: transparent;
+  }
+
+  /* Code Input (transparent overlay) */
+  .code-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 12px;
+    margin: 0;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 22px;
+    background: transparent;
+    color: transparent;
+    caret-color: #e5e5e5;
+    resize: none;
+    outline: none;
+    overflow: auto;
+    z-index: 3;
+    border: none;
+    tab-size: 2;
+  }
+
+  .code-input:focus {
+    outline: none;
+  }
+
+  /* Controls Panel */
+  .controls-panel {
+    background: #21252b;
+    border-top: 1px solid #3e4451;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  /* Trace Button */
+  .trace-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #61afef;
+    border: none;
+    border-radius: 6px;
+    color: #282c34;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .trace-button:hover:not(:disabled) {
+    background: #528bcc;
+    transform: translateY(-1px);
+  }
+
+  .trace-button:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  .trace-button.tracing {
+    background: rgba(97, 175, 239, 0.4);
+    cursor: not-allowed;
+  }
+
+  /* Playback Controls */
+  .playback-controls {
+    display: flex;
+    gap: 6px;
+  }
+
+  /* Control Buttons */
+  .ctrl-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 12px;
+    background: #2c313a;
+    border: 1px solid #3e4451;
+    border-radius: 5px;
+    color: #abb2bf;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .ctrl-btn:hover:not(:disabled) {
+    background: #3e4451;
+    border-color: #5c6370;
+    color: #e5e5e5;
+  }
+
+  .ctrl-btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .ctrl-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .ctrl-btn.icon-only {
+    padding: 8px 10px;
+  }
+
+  .ctrl-btn.flex-1 {
+    flex: 1;
+  }
+
+  .ctrl-btn.play-btn {
+    background: #2c313a;
+  }
+
+  .ctrl-btn.play-btn.playing {
+    background: rgba(198, 120, 221, 0.15);
+    border-color: #c678dd;
+    color: #c678dd;
+  }
+
+  .ctrl-btn.play-btn:hover:not(:disabled) {
+    background: rgba(97, 175, 239, 0.15);
+    border-color: #61afef;
+    color: #61afef;
+  }
+
+  /* Progress Slider */
+  .progress-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .progress-track {
+    flex: 1;
+    height: 6px;
+    background: #3e4451;
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    overflow: visible;
+  }
+
+  .progress-track:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(97, 175, 239, 0.3);
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #61afef, #56b6c2);
+    border-radius: 3px;
+    transition: width 0.15s ease;
+  }
+
+  .progress-thumb {
+    position: absolute;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    background: #e5e5e5;
+    border: 2px solid #61afef;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: left 0.15s ease, transform 0.1s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .progress-track:hover .progress-thumb {
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+
+  .step-counter {
+    color: #5c6370;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    min-width: 50px;
+    text-align: right;
+  }
+
+  /* Animation for loader */
+  :global(.animate-spin) {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+</style>

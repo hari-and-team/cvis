@@ -7,6 +7,24 @@
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
+  
+  /* One Dark Pro CSS variables */
+  --bg-deep: #21252b;
+  --bg-card: #282c34;
+  --bg-raised: #2c313a;
+  --border: #3e4451;
+  --border-deep: #181a1f;
+  --text-dim: #5c6370;
+  --text-mid: #abb2bf;
+  --text-bright: #e5e5e5;
+  --accent: #61afef;
+  --blue: #61afef;
+  --green: #98c379;
+  --yellow: #e5c07b;
+  --orange: #d19a66;
+  --red: #e06c75;
+  --purple: #c678dd;
+  --cyan: #56b6c2;
 }
 
 html,
@@ -16,8 +34,8 @@ body {
   width: 100%;
   min-width: 320px;
   min-height: 100%;
-  background: #0a0e1a;
-  color: #c8daf4;
+  background: #282c34;
+  color: #abb2bf;
 }
 
 #svelte,
@@ -27,4 +45,34 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #21252b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3e4451;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5c6370;
+}
+
+/* Selection highlight styling */
+::selection {
+  background: #61afef40;
+  color: #e5e5e5;
+}
+
+::-moz-selection {
+  background: #61afef40;
+  color: #e5e5e5;
 }

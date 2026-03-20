@@ -210,6 +210,19 @@ export function tokenize(code: string): CodeToken[] {
   return tokens;
 }
 
+// One Dark Pro syntax highlighting colors
+const COLORS = {
+  comment: '#5c6370',      // Gray (italic)
+  preprocessor: '#c678dd', // Purple
+  string: '#98c379',       // Green
+  number: '#d19a66',       // Orange
+  keyword: '#c678dd',      // Purple
+  type: '#e5c07b',         // Yellow (for types like int, float)
+  function: '#61afef',     // Blue
+  stdLib: '#56b6c2',       // Cyan
+  operator: '#abb2bf',     // Normal text
+} as const;
+
 export default function highlight(code: string): string {
   if (!code) return "";
   
@@ -224,39 +237,50 @@ export default function highlight(code: string): string {
 
   // Comments (single-line and multi-line)
   s = s.replace(/(\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g, (m) => 
-    addPlaceholder(`<span style="color:#22c55e;font-style:italic">${m}</span>`)
+    addPlaceholder(`<span style="color:${COLORS.comment};font-style:italic">${m}</span>`)
   );
 
   // Preprocessor directives
   s = s.replace(/(#[^\n]*)/g, (m) => 
-    addPlaceholder(`<span style="color:#a78bfa">${m}</span>`)
+    addPlaceholder(`<span style="color:${COLORS.preprocessor}">${m}</span>`)
   );
 
   // String literals
   s = s.replace(/("(?:[^"\\]|\\.)*")/g, (m) => 
-    addPlaceholder(`<span style="color:#fde68a">${m}</span>`)
+    addPlaceholder(`<span style="color:${COLORS.string}">${m}</span>`)
+  );
+
+  // Character literals
+  s = s.replace(/('(?:[^'\\]|\\.)*')/g, (m) => 
+    addPlaceholder(`<span style="color:${COLORS.string}">${m}</span>`)
   );
 
   // Numbers
-  s = s.replace(/\b(\d+(?:\.\d+)?)\b/g, (m) => 
-    addPlaceholder(`<span style="color:#fb923c">${m}</span>`)
+  s = s.replace(/\b(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g, (m) => 
+    addPlaceholder(`<span style="color:${COLORS.number}">${m}</span>`)
   );
 
-  // Keywords
+  // Type keywords (yellow in One Dark)
   s = s.replace(
-    /\b(int|float|double|char|void|return|if|else|while|for|do|switch|case|break|continue|struct|typedef|sizeof|long|short|unsigned|signed|const|static|NULL)\b/g,
-    (m) => addPlaceholder(`<span style="color:#f472b6;font-weight:600">${m}</span>`)
+    /\b(int|float|double|char|void|long|short|unsigned|signed|struct|typedef|const|static)\b/g,
+    (m) => addPlaceholder(`<span style="color:${COLORS.type}">${m}</span>`)
   );
 
-  // Standard library functions
+  // Control flow keywords (purple in One Dark)
   s = s.replace(
-    /\b(printf|scanf|fprintf|putchar|puts|malloc|calloc|free|abs|sqrt|strlen|pow|rand|atoi|strcmp|strcpy|strcat)\b/g,
-    (m) => addPlaceholder(`<span style="color:#38bdf8">${m}</span>`)
+    /\b(return|if|else|while|for|do|switch|case|break|continue|sizeof|NULL)\b/g,
+    (m) => addPlaceholder(`<span style="color:${COLORS.keyword}">${m}</span>`)
   );
 
-  // Function calls (identifiers followed by parenthesis)
+  // Standard library functions (cyan)
+  s = s.replace(
+    /\b(printf|scanf|fprintf|putchar|puts|malloc|calloc|realloc|free|abs|sqrt|strlen|pow|rand|srand|atoi|strcmp|strcpy|strcat|memset|memcpy|fopen|fclose|fread|fwrite|getchar|exit)\b/g,
+    (m) => addPlaceholder(`<span style="color:${COLORS.stdLib}">${m}</span>`)
+  );
+
+  // Function calls (identifiers followed by parenthesis) - blue
   s = s.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, (m) => 
-    addPlaceholder(`<span style="color:#60a5fa">${m}</span>`)
+    addPlaceholder(`<span style="color:${COLORS.function}">${m}</span>`)
   );
 
   // Restore placeholders
