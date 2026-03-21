@@ -6,6 +6,7 @@
 
   const LINE_HEIGHT_PX = 22;
   const EDITOR_PADDING_PX = 12;
+  const AUTO_SCROLL_MARGIN_LINES = 3;
 
   const dispatch = createEventDispatcher<{
     trace: void;
@@ -20,6 +21,7 @@
   let lnRef: HTMLDivElement;
   let playing = false;
   let scrollTop = 0;
+  let lastAutoScrolledStep = -1;
 
   $: {
     code = $editorCode;
@@ -42,6 +44,17 @@
     }
   }
 
+  $: {
+    if (!isTraceMode) {
+      lastAutoScrolledStep = -1;
+    } else if (taRef && hlLine !== null && curStep !== lastAutoScrolledStep) {
+      // Keep the active trace line visible, but only when step changes so
+      // manual scrolling during a paused step is not overridden repeatedly.
+      ensureHighlightedLineVisible(hlLine);
+      lastAutoScrolledStep = curStep;
+    }
+  }
+
   function syncScroll() {
     if (taRef && preRef && lnRef) {
       scrollTop = taRef.scrollTop;
@@ -49,6 +62,28 @@
       preRef.scrollLeft = taRef.scrollLeft;
       lnRef.scrollTop = taRef.scrollTop;
     }
+  }
+
+  function ensureHighlightedLineVisible(lineNo: number) {
+    if (!taRef) return;
+
+    const lineTop = EDITOR_PADDING_PX + (lineNo - 1) * LINE_HEIGHT_PX;
+    const lineBottom = lineTop + LINE_HEIGHT_PX;
+    const viewportTop = taRef.scrollTop;
+    const viewportBottom = viewportTop + taRef.clientHeight;
+    const margin = AUTO_SCROLL_MARGIN_LINES * LINE_HEIGHT_PX;
+
+    const shouldScrollUp = lineTop < viewportTop + margin;
+    const shouldScrollDown = lineBottom > viewportBottom - margin;
+    if (!shouldScrollUp && !shouldScrollDown) return;
+
+    const centeredTop = Math.max(
+      0,
+      lineTop - taRef.clientHeight / 2 + LINE_HEIGHT_PX / 2
+    );
+
+    taRef.scrollTop = centeredTop;
+    syncScroll();
   }
 
   function onKey(e: KeyboardEvent) {

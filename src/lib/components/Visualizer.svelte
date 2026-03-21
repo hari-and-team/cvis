@@ -14,16 +14,20 @@
 -->
 
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
-  import { traceSteps, currentStepIndex, isPlaying } from '$lib/stores';
+  import { editorCode, traceSteps, currentStepIndex, isPlaying, runSessionId } from '$lib/stores';
   import type { TraceStep } from '$lib/types';
+  import {
+    predictProgramIntent,
+    intentToVisualizerMode,
+    type IntentVisualizationMode
+  } from '$lib/visualizer/program-intent';
 
   // ── Props ────────────────────────────────────────────
   export let traceStep: TraceStep | null = null;
   export let dataStructures: any[] = [];
 
   // ── Internal state ───────────────────────────────────
-  type DSMode = 'auto' | 'linkedlist' | 'array' | 'stack' | 'tree';
+  type DSMode = 'auto' | 'linkedlist' | 'array' | 'stack' | 'tree' | 'graph';
   let mode: DSMode = 'auto';
   let highlightAddr: string | null = null;
   let canvasEl: HTMLElement;
@@ -31,13 +35,20 @@
   // ── Parsed memory snapshot ───────────────────────────
   interface MemNode { addr: string; val: string | number; next: string | null; }
   interface MemArray { name: string; cells: { idx: number; val: string | number; active: boolean }[]; }
-  interface StackFrame { name: string; locals: Record<string, string | number>; }
+  interface StackFrame { name: string; locals: Record<string, unknown>; }
 
   $: memNodes   = parseLinkedList(traceStep?.memory ?? {});
   $: memArrays  = parseArrays(traceStep?.memory ?? {});
-  $: stackFrames = (traceStep?.stackFrames ?? []) as StackFrame[];
+  $: allStackFrames = normalizeStackFrames(traceStep?.stackFrames);
+  $: globalFrame = allStackFrames.find((frame) => isGlobalFrame(frame)) ?? null;
+  $: stackFrames = allStackFrames.filter((frame) => !isGlobalFrame(frame));
   $: registers   = traceStep?.registers ?? {};
-  $: detectedMode = dataStructures.length > 0 ? 'auto' : detectMode(traceStep);
+  $: intentPrediction = predictProgramIntent($editorCode);
+  $: traceDetectedMode = detectMode(traceStep);
+  $: predictedMode = intentToVisualizerMode(intentPrediction.primaryIntent);
+  $: detectedMode = dataStructures.length > 0
+    ? 'auto'
+    : resolveDetectedMode(traceDetectedMode, predictedMode);
   $: activeMode   = mode === 'auto' ? detectedMode : mode;
 
   // ── Memory parsers ───────────────────────────────────
@@ -59,8 +70,8 @@
   function parseArrays(mem: Record<string, any>): MemArray[] {
     const arrMap: Record<string, MemArray> = {};
     Object.entries(mem).forEach(([k, v]) => {
-      // Match pattern: varname[N]
-      const m = k.match(/^(\w+)\[(\d+)\]$/);
+      // Match pattern: name[index], including scoped names like main.arr[0]
+      const m = k.match(/^(.+)\[(\d+)\]$/);
       if (m) {
         const [, name, idxStr] = m;
         const idx = parseInt(idxStr);
@@ -75,13 +86,54 @@
     }));
   }
 
+  function normalizeStackFrames(frames: unknown): StackFrame[] {
+    if (!Array.isArray(frames)) return [];
+    return frames.filter((frame): frame is StackFrame => {
+      if (!frame || typeof frame !== 'object') return false;
+      const maybeFrame = frame as { name?: unknown; locals?: unknown };
+      return typeof maybeFrame.name === 'string' && !!maybeFrame.locals && typeof maybeFrame.locals === 'object';
+    });
+  }
+
+  function isGlobalFrame(frame: StackFrame): boolean {
+    return frame.name.trim().toLowerCase() === 'global';
+  }
+
+  function hasRealStackFrame(frames: unknown): boolean {
+    return normalizeStackFrames(frames).some((frame) => !isGlobalFrame(frame));
+  }
+
   function detectMode(step: TraceStep | null): DSMode {
     if (!step) return 'array';
     const keys = Object.keys(step.memory ?? {});
     if (keys.some(k => k.startsWith('node_') || k.includes('->next'))) return 'linkedlist';
-    if (keys.some(k => /\w+\[\d+\]/.test(k))) return 'array';
-    if ((step.stackFrames?.length ?? 0) > 0) return 'stack';
+    if (keys.some(k => /.+\[\d+\]/.test(k))) return 'array';
+    if (hasRealStackFrame(step.stackFrames)) return 'stack';
     return 'array';
+  }
+
+  function resolveDetectedMode(traceMode: DSMode, predictedMode: IntentVisualizationMode): DSMode {
+    // Runtime trace evidence should override prediction, except the default array fallback.
+    return traceMode === 'array' ? predictedMode : traceMode;
+  }
+
+  function intentColorClass(confidence: number): string {
+    if (confidence >= 0.8) return 'text-emerald-400';
+    if (confidence >= 0.6) return 'text-sky-400';
+    return 'text-amber-400';
+  }
+
+  function formatValue(value: unknown): string {
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return `[${value.map((v) => formatValue(v)).join(', ')}]`;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
   }
 
   // ── Stack walk helpers ───────────────────────────────
@@ -113,7 +165,7 @@
   <div class="flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-[#0f1629] shrink-0">
     <span class="text-[10px] tracking-widest uppercase text-slate-500 mr-2">View</span>
 
-    {#each (['auto','linkedlist','array','stack','tree'] as const) as m}
+    {#each (['auto','linkedlist','array','stack','tree','graph'] as const) as m}
       <button
         class="px-2.5 py-1 rounded text-[11px] border transition-all duration-150
                {mode === m
@@ -122,12 +174,17 @@
         on:click={() => mode = m}
       >
         {m === 'auto' ? '⟳ auto' : m === 'linkedlist' ? '→ list' : m === 'array' ? '[ ] arr'
-          : m === 'stack' ? '▲ stack' : '⌥ tree'}
+          : m === 'stack' ? '▲ stack' : m === 'tree' ? '⌥ tree' : '◌ graph'}
       </button>
     {/each}
 
     <!-- step badge -->
     <div class="ml-auto flex items-center gap-3">
+      <span class="text-[10px] text-slate-500">
+        intent <span class={intentColorClass(intentPrediction.confidence)}>{intentPrediction.primaryLabel}</span>
+        &nbsp;·&nbsp;
+        <span class="text-slate-400">{Math.round(intentPrediction.confidence * 100)}%</span>
+      </span>
       {#if traceStep}
         <span class="text-[10px] text-slate-500">
           line <span class="text-sky-400">{traceStep.lineNo}</span>
@@ -156,6 +213,16 @@
           <div class="text-4xl opacity-30">◈</div>
           <div class="text-xs tracking-widest uppercase">awaiting trace</div>
           <div class="text-[10px] text-slate-700">compile → run → trace to visualize</div>
+          <div class="text-[10px] text-slate-600">
+            predicted intent:
+            <span class={intentColorClass(intentPrediction.confidence)}>{intentPrediction.primaryLabel}</span>
+            ({Math.round(intentPrediction.confidence * 100)}%)
+          </div>
+          {#if intentPrediction.matchedSignals.length > 0}
+            <div class="text-[9px] text-slate-700 max-w-md text-center">
+              signals: {intentPrediction.matchedSignals.join(' · ')}
+            </div>
+          {/if}
         </div>
 
       <!-- ── LINKED LIST ── -->
@@ -171,8 +238,9 @@
           <div class="flex items-center gap-0 flex-wrap">
             {#each memNodes as node, i}
               <!-- Node box -->
-              <div
-                class="relative flex flex-col items-center cursor-pointer group"
+              <button
+                type="button"
+                class="relative flex flex-col items-center cursor-pointer group bg-transparent border-0 p-0 text-left"
                 on:click={() => highlightAddr = highlightAddr === node.addr ? null : node.addr}
               >
                 <!-- HEAD / TAIL label -->
@@ -206,7 +274,7 @@
 
                 <!-- addr tooltip -->
                 <div class="text-[9px] text-slate-600 mt-1 font-mono">{node.addr}</div>
-              </div>
+              </button>
 
               <!-- Arrow / NULL -->
               {#if i < memNodes.length - 1}
@@ -281,6 +349,9 @@
 
           {#if memArrays.length === 0}
             <div class="text-slate-600 text-xs tracking-widest">// no array data in current step</div>
+            <div class="text-slate-700 text-[10px]">
+              predicted algorithm family: <span class="text-sky-400">{intentPrediction.primaryLabel}</span>
+            </div>
           {/if}
         </div>
 
@@ -314,7 +385,7 @@
                   <div class="px-4 py-2 grid grid-cols-2 gap-x-4 gap-y-0.5">
                     {#each Object.entries(frame.locals) as [k, v]}
                       <span class="text-[10px] text-slate-500">{k}</span>
-                      <span class="text-[10px] text-slate-300 text-right font-mono">{v}</span>
+                      <span class="text-[10px] text-slate-300 text-right font-mono">{formatValue(v)}</span>
                     {/each}
                   </div>
                 {/if}
@@ -324,6 +395,21 @@
             <!-- Stack base -->
             <div class="w-full h-2 bg-slate-800 rounded-b border border-t-0 border-slate-700"></div>
           {/if}
+
+          {#if globalFrame && Object.keys(globalFrame.locals ?? {}).length > 0}
+            <div class="w-full mt-5 border border-slate-700 rounded bg-[#0f1629]">
+              <div class="px-4 py-2 border-b border-slate-700 flex items-center justify-between">
+                <span class="text-xs font-bold text-slate-300">global</span>
+                <span class="text-[9px] text-slate-500 tracking-wider">scope</span>
+              </div>
+              <div class="px-4 py-2 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                {#each Object.entries(globalFrame.locals) as [k, v]}
+                  <span class="text-[10px] text-slate-500">{k}</span>
+                  <span class="text-[10px] text-slate-300 text-right font-mono">{formatValue(v)}</span>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </div>
 
       <!-- ── TREE (placeholder) ── -->
@@ -332,6 +418,16 @@
           <div class="text-2xl opacity-30">⌥</div>
           <div class="text-xs tracking-widest uppercase">BST rendering coming soon</div>
           <div class="text-[10px]">switch to linked list or array for now</div>
+        </div>
+
+      <!-- ── GRAPH (placeholder) ── -->
+      {:else if activeMode === 'graph'}
+        <div class="flex flex-col items-center justify-center h-40 text-slate-600 gap-2">
+          <div class="text-2xl opacity-30">◌</div>
+          <div class="text-xs tracking-widest uppercase">Graph rendering coming soon</div>
+          <div class="text-[10px] text-center max-w-sm">
+            intent detector recognized graph-style code. full node/edge animation is next.
+          </div>
         </div>
       {/if}
 
@@ -377,12 +473,19 @@
 
   </div>
 
+  {#if $runSessionId}
+    <div class="px-4 py-1.5 border-t border-slate-800 bg-[#0f1629] text-[10px] text-slate-500">
+      Runtime stdin is available in the <span class="text-emerald-400">Output</span> tab.
+    </div>
+  {/if}
+
   <!-- ── Bottom status bar ── -->
   <div class="flex items-center gap-4 px-4 py-1.5 border-t border-slate-800 bg-[#0f1629]
                text-[10px] text-slate-600 shrink-0">
     <span>ip: <span class="text-slate-400">{traceStep?.instructionPointer ?? '—'}</span></span>
     <span>frames: <span class="text-slate-400">{stackFrames.length}</span></span>
     <span>mode: <span class="text-slate-400">{activeMode}</span></span>
+    <span>intent: <span class={intentColorClass(intentPrediction.confidence)}>{intentPrediction.primaryLabel}</span></span>
     <span class="ml-auto">
       {#if traceStep}
         {new Date(traceStep.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}

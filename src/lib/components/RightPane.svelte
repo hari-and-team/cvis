@@ -1,14 +1,17 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { AlertTriangle, Cpu, Loader2, Code2 } from 'lucide-svelte';
   import Visualizer from './Visualizer.svelte';
   import type { TraceStep } from '$lib/types';
   import {
+    editorCode,
     errorMessage,
     lastCompileResult,
     lastExecutionResult,
     runConsoleTranscript,
     runSessionId
   } from '$lib/stores';
+  import { predictProgramIntent } from '$lib/visualizer/program-intent';
   import { sendRuntimeInputLine } from '$lib/layout/run-actions';
   import { consumeBufferedLines, normalizeTerminalText } from '$lib/terminal/console-input';
   import { RIGHT_PANE_TABS, type RightPaneTabId, VISUALIZER_FEATURES } from './right-pane-config';
@@ -17,6 +20,7 @@
   export let currentStep: number = 0;
   export let isTracing = false;
   export let traceErr: string | null = null;
+  const TRACE_LOADING_TICK_MS = 850;
 
   let activeTab: RightPaneTabId = 'output';
   let terminalInputBuffer = '';
@@ -26,8 +30,13 @@
   let outputRef: HTMLDivElement;
   let prevRenderedOutput = '';
   let prevSessionId: string | null = null;
+  let loadingStepIndex = 0;
+  let loadingTicker: number | null = null;
 
   $: canSendToStdin = Boolean($runSessionId);
+  $: intentPrediction = predictProgramIntent($editorCode);
+  $: loadingSteps = getLoadingSteps(intentPrediction.primaryLabel);
+  // Runtime transcript takes priority so users always see the latest terminal state.
   $: output = $runConsoleTranscript
     ? $runConsoleTranscript
     : $lastExecutionResult
@@ -37,7 +46,7 @@
       : '';
   $: renderedOutput = `${output}${canSendToStdin ? terminalInputBuffer : ''}`;
 
-  $: hasError = $lastExecutionResult?.stderr || $lastCompileResult?.errors?.length;
+  $: hasError = Boolean($lastExecutionResult?.stderr || $lastCompileResult?.errors?.length);
   $: currentTraceStepData = traceSteps[currentStep] || null;
   $: if ($runSessionId !== prevSessionId) {
     prevSessionId = $runSessionId;
@@ -56,6 +65,38 @@
         outputRef.scrollTop = outputRef.scrollHeight;
       }
     });
+  }
+
+  $: {
+    if (isTracing && typeof window !== 'undefined') {
+      if (loadingTicker === null) {
+        loadingTicker = window.setInterval(() => {
+          const stepCount = Math.max(loadingSteps.length, 1);
+          loadingStepIndex = (loadingStepIndex + 1) % stepCount;
+        }, TRACE_LOADING_TICK_MS);
+      }
+    } else {
+      if (loadingTicker !== null) {
+        clearInterval(loadingTicker);
+        loadingTicker = null;
+      }
+      loadingStepIndex = 0;
+    }
+  }
+
+  onMount(() => () => {
+    if (loadingTicker !== null) {
+      clearInterval(loadingTicker);
+    }
+  });
+
+  function getLoadingSteps(intentLabel: string): string[] {
+    return [
+      'Scanning tokens and control flow...',
+      `Predicting algorithm intent: ${intentLabel}`,
+      'Building execution timeline...',
+      'Preparing interactive visualization...'
+    ];
   }
 
   function enqueueInputLine(line: string) {
@@ -199,6 +240,12 @@
             <Loader2 size={36} class="loader-spin" />
           </div>
           <span class="loading-text">Interpreting C code…</span>
+          <span class="loading-intent">
+            predicted:
+            <span class="loading-intent-value">{intentPrediction.primaryLabel}</span>
+            ({Math.round(intentPrediction.confidence * 100)}%)
+          </span>
+          <span class="loading-step">{loadingSteps[loadingStepIndex]}</span>
         </div>
       {:else if traceErr}
         <div class="error-state">
@@ -462,6 +509,28 @@
     color: var(--od-text);
     font-size: 13px;
     font-weight: 600;
+  }
+
+  .loading-intent {
+    font-size: 11px;
+    color: var(--od-text-dim);
+  }
+
+  .loading-intent-value {
+    color: var(--od-cyan);
+    font-weight: 700;
+  }
+
+  .loading-step {
+    font-size: 10px;
+    color: color-mix(in srgb, var(--od-blue) 75%, var(--od-text-dim));
+    letter-spacing: 0.25px;
+    animation: pulse-step 0.9s ease-in-out infinite;
+  }
+
+  @keyframes pulse-step {
+    0%, 100% { opacity: 0.6; transform: translateY(0); }
+    50% { opacity: 1; transform: translateY(-1px); }
   }
 
   .error-state {

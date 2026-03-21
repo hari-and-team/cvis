@@ -38,9 +38,25 @@ function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-function getInitialTraceStepIndex(steps: Array<{ stackFrames?: unknown[] }>): number {
-  const index = steps.findIndex((step) => Array.isArray(step.stackFrames) && step.stackFrames.length > 0);
-  return index >= 0 ? index : 0;
+function hasNonGlobalFrame(step: { stackFrames?: Array<{ name?: unknown }> }): boolean {
+  if (!Array.isArray(step.stackFrames)) return false;
+  return step.stackFrames.some((frame) => {
+    if (!frame || typeof frame !== 'object') return false;
+    const name = typeof frame.name === 'string' ? frame.name.trim().toLowerCase() : '';
+    return name !== '' && name !== 'global';
+  });
+}
+
+function getInitialTraceStepIndex(steps: Array<{ stackFrames?: Array<{ name?: unknown }> }>): number {
+  const firstExecutableFrame = steps.findIndex((step) => hasNonGlobalFrame(step));
+  if (firstExecutableFrame >= 0) {
+    return firstExecutableFrame;
+  }
+
+  const firstWithFrames = steps.findIndex(
+    (step) => Array.isArray(step.stackFrames) && step.stackFrames.length > 0
+  );
+  return firstWithFrames >= 0 ? firstWithFrames : 0;
 }
 
 const RUN_POLL_INTERVAL_MS = 120;

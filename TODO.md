@@ -1,5 +1,13 @@
 # TODO
 
+## Current Focus: Visualizer Fix + UX
+- [ ] Keep trace highlight and editor viewport in sync (auto-scroll to active line).
+- [ ] Ensure trace starts on the first executable frame (skip global-only frame when possible).
+- [ ] Split `Compile` and `Run` so learners can validate compile success without executing.
+- [ ] Keep tracing workflow inside `Visualizer` tab and return to edit mode after trace end.
+- [ ] Harden empty-state rendering when trace data is partial or only contains globals.
+- [ ] Add robust visualizer data contracts for list/array/stack/tree/graph rendering.
+
 ## Current Focus: Input + Terminal Emulation
 - [ ] Make runtime input/output feel like a real C terminal session for learners.
 - [ ] Validate `scanf` menu loops (prompt + typed input shown inline in output).

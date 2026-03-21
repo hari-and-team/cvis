@@ -32,6 +32,7 @@ export const RIGHT_PANE_TABS: Array<{
 
 export const VISUALIZER_FEATURES = [
   { label: 'Structs', color: OneDark.purple },
+  { label: 'Graph intent', color: OneDark.cyan },
   { label: 'Linked lists', color: OneDark.blue },
   { label: 'malloc/free', color: OneDark.red },
   { label: 'Pointers', color: OneDark.cyan },
