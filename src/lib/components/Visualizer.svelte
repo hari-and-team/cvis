@@ -1,597 +1,394 @@
+<!--
+  Visualizer.svelte
+  Drop into: src/lib/components/Visualizer.svelte
+
+  Props:
+    traceStep    — TraceStep | null   (current step from /api/trace)
+    dataStructures — any[]            (optional: pre-parsed DS hints)
+
+  Reads from stores:
+    traceSteps, currentStepIndex, isPlaying
+
+  Design: dark terminal / blueprint — matches cvis theme (#0a0e1a, #0f1629)
+  Tailwind classes only, no inline style blocks.
+-->
+
 <script lang="ts">
-  import type { TraceStep, StackFrame } from '$lib/types';
+  import { onMount, tick } from 'svelte';
+  import { traceSteps, currentStepIndex, isPlaying } from '$lib/stores';
+  import type { TraceStep } from '$lib/types';
 
+  // ── Props ────────────────────────────────────────────
   export let traceStep: TraceStep | null = null;
-  export let sourceLines: string[] = [];
+  export let dataStructures: any[] = [];
 
-  // Track changes for highlighting
-  let prevFrames: StackFrame[] = [];
-  let changedVars: Set<string> = new Set();
+  // ── Internal state ───────────────────────────────────
+  type DSMode = 'auto' | 'linkedlist' | 'array' | 'stack' | 'tree';
+  let mode: DSMode = 'auto';
+  let highlightAddr: string | null = null;
+  let canvasEl: HTMLElement;
 
-  // Separate heap objects (arrays, structs) from primitives
-  interface HeapObject {
-    id: string;
-    type: 'array' | 'struct';
-    values: any[];
-    fields?: Record<string, any>;
-  }
+  // ── Parsed memory snapshot ───────────────────────────
+  interface MemNode { addr: string; val: string | number; next: string | null; }
+  interface MemArray { name: string; cells: { idx: number; val: string | number; active: boolean }[]; }
+  interface StackFrame { name: string; locals: Record<string, string | number>; }
 
-  function isHeapObject(val: any): boolean {
-    return Array.isArray(val) || (val && typeof val === 'object');
-  }
+  $: memNodes   = parseLinkedList(traceStep?.memory ?? {});
+  $: memArrays  = parseArrays(traceStep?.memory ?? {});
+  $: stackFrames = (traceStep?.stackFrames ?? []) as StackFrame[];
+  $: registers   = traceStep?.registers ?? {};
+  $: detectedMode = dataStructures.length > 0 ? 'auto' : detectMode(traceStep);
+  $: activeMode   = mode === 'auto' ? detectedMode : mode;
 
-  function getHeapId(frameName: string, varName: string): string {
-    return `${frameName}.${varName}`;
-  }
-
-  // Extract heap objects from all frames
-  function extractHeapObjects(frames: StackFrame[]): HeapObject[] {
-    const objects: HeapObject[] = [];
-    
-    for (const frame of frames) {
-      for (const [name, value] of Object.entries(frame.locals)) {
-        if (Array.isArray(value)) {
-          objects.push({
-            id: getHeapId(frame.name, name),
-            type: 'array',
-            values: value
-          });
-        } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-          objects.push({
-            id: getHeapId(frame.name, name),
-            type: 'struct',
-            values: [],
-            fields: value
-          });
-        }
+  // ── Memory parsers ───────────────────────────────────
+  // Expects memory keys like "node_0x2a00", "arr[0]", etc.
+  function parseLinkedList(mem: Record<string, any>): MemNode[] {
+    const nodes: MemNode[] = [];
+    Object.entries(mem).forEach(([k, v]) => {
+      if (k.startsWith('node_') || (typeof v === 'object' && v !== null && 'next' in v)) {
+        nodes.push({
+          addr: k.replace('node_', ''),
+          val: v?.data ?? v?.val ?? v ?? '?',
+          next: v?.next ?? null
+        });
       }
-    }
-    
-    return objects;
+    });
+    return nodes;
   }
 
-  // Detect which variables changed
-  function detectChanges(current: StackFrame[], prev: StackFrame[]): Set<string> {
-    const changed = new Set<string>();
-    
-    for (const frame of current) {
-      const prevFrame = prev.find(f => f.name === frame.name);
-      for (const [name, value] of Object.entries(frame.locals)) {
-        const prevVal = prevFrame?.locals[name];
-        if (JSON.stringify(value) !== JSON.stringify(prevVal)) {
-          changed.add(`${frame.name}.${name}`);
-        }
+  function parseArrays(mem: Record<string, any>): MemArray[] {
+    const arrMap: Record<string, MemArray> = {};
+    Object.entries(mem).forEach(([k, v]) => {
+      // Match pattern: varname[N]
+      const m = k.match(/^(\w+)\[(\d+)\]$/);
+      if (m) {
+        const [, name, idxStr] = m;
+        const idx = parseInt(idxStr);
+        if (!arrMap[name]) arrMap[name] = { name, cells: [] };
+        arrMap[name].cells.push({ idx, val: v, active: idx === (registers['pc'] ?? -1) });
       }
-    }
-    
-    return changed;
+    });
+    // Sort cells by index
+    return Object.values(arrMap).map(a => ({
+      ...a,
+      cells: a.cells.sort((x, y) => x.idx - y.idx)
+    }));
   }
 
-  // Format a primitive value for display
-  function formatValue(val: any): string {
-    if (val === null || val === undefined) return 'null';
-    if (typeof val === 'string') return `"${val}"`;
-    if (typeof val === 'number') {
-      if (Number.isInteger(val)) return String(val);
-      return val.toFixed(2);
-    }
-    return String(val);
+  function detectMode(step: TraceStep | null): DSMode {
+    if (!step) return 'array';
+    const keys = Object.keys(step.memory ?? {});
+    if (keys.some(k => k.startsWith('node_') || k.includes('->next'))) return 'linkedlist';
+    if (keys.some(k => /\w+\[\d+\]/.test(k))) return 'array';
+    if ((step.stackFrames?.length ?? 0) > 0) return 'stack';
+    return 'array';
   }
 
-  // Check if value is a char (for array display)
-  function isCharValue(val: number): boolean {
-    return typeof val === 'number' && val >= 32 && val < 127;
+  // ── Stack walk helpers ───────────────────────────────
+  $: stackList = stackFrames.slice().reverse(); // top of stack = last frame
+
+  // ── Register color ───────────────────────────────────
+  function regColor(key: string): string {
+    const map: Record<string, string> = {
+      pc: 'text-emerald-400', sp: 'text-sky-400',
+      fp: 'text-violet-400', ax: 'text-amber-400',
+    };
+    return map[key.toLowerCase()] ?? 'text-slate-300';
   }
 
-  $: stackFrames = traceStep?.stackFrames || [];
-  $: heapObjects = extractHeapObjects(stackFrames);
-  $: currentLine = traceStep && sourceLines[traceStep.lineNo - 1]?.trim() || '';
-  
-  $: if (traceStep?.stackFrames) {
-    changedVars = detectChanges(traceStep.stackFrames, prevFrames);
-    prevFrames = JSON.parse(JSON.stringify(traceStep.stackFrames));
+  // ── Animation helpers ────────────────────────────────
+  let prevStepIndex = -1;
+  $: if ($currentStepIndex !== prevStepIndex) {
+    highlightAddr = null;
+    prevStepIndex = $currentStepIndex;
   }
 </script>
 
-<div class="visualizer">
-  {#if !traceStep || stackFrames.length === 0}
-    <div class="empty-state">
-      <div class="empty-icon">
-        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="3" y="3" width="7" height="7" rx="1" />
-          <rect x="14" y="3" width="7" height="7" rx="1" />
-          <rect x="3" y="14" width="7" height="7" rx="1" />
-          <rect x="14" y="14" width="7" height="7" rx="1" />
-        </svg>
-      </div>
-      <h3>Ready to Visualize</h3>
-      <p>Click <strong>Trace Execution</strong> to see your program step by step</p>
-      <div class="features">
-        <span class="feature">📚 Call Stack</span>
-        <span class="feature">📦 Variables</span>
-        <span class="feature">🔗 Arrays & Pointers</span>
-      </div>
+<!-- ═══════════════════════════════════════════════════════════
+     ROOT
+════════════════════════════════════════════════════════════ -->
+<div class="flex flex-col h-full bg-[#0a0e1a] text-slate-200 font-mono text-sm select-none">
+
+  <!-- ── Toolbar ── -->
+  <div class="flex items-center gap-2 px-4 py-2 border-b border-slate-800 bg-[#0f1629] shrink-0">
+    <span class="text-[10px] tracking-widest uppercase text-slate-500 mr-2">View</span>
+
+    {#each (['auto','linkedlist','array','stack','tree'] as const) as m}
+      <button
+        class="px-2.5 py-1 rounded text-[11px] border transition-all duration-150
+               {mode === m
+                 ? 'bg-emerald-900/40 border-emerald-500/50 text-emerald-400'
+                 : 'border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300'}"
+        on:click={() => mode = m}
+      >
+        {m === 'auto' ? '⟳ auto' : m === 'linkedlist' ? '→ list' : m === 'array' ? '[ ] arr'
+          : m === 'stack' ? '▲ stack' : '⌥ tree'}
+      </button>
+    {/each}
+
+    <!-- step badge -->
+    <div class="ml-auto flex items-center gap-3">
+      {#if traceStep}
+        <span class="text-[10px] text-slate-500">
+          line <span class="text-sky-400">{traceStep.lineNo}</span>
+          &nbsp;·&nbsp;
+          step <span class="text-emerald-400">{traceStep.stepNumber}</span>
+          / <span class="text-slate-400">{$traceSteps.length}</span>
+        </span>
+      {/if}
+      <div class="w-1.5 h-1.5 rounded-full {$isPlaying ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}"></div>
     </div>
-  {:else}
-    <div class="visualization-area">
-      <!-- Left Panel: Frames (Call Stack) -->
-      <div class="frames-panel">
-        <div class="panel-header">
-          <span class="panel-title">Frames</span>
-          <span class="panel-subtitle">Call Stack</span>
+  </div>
+
+  <!-- ── Canvas + Registers ── -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- Canvas area -->
+    <div class="flex-1 relative overflow-auto p-6" bind:this={canvasEl}>
+
+      <!-- Dot grid background -->
+      <div class="pointer-events-none absolute inset-0"
+           style="background-image: radial-gradient(circle, #1e2a40 1px, transparent 1px); background-size: 28px 28px; opacity:0.5;"></div>
+
+      <!-- Empty state -->
+      {#if !traceStep}
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-600">
+          <div class="text-4xl opacity-30">◈</div>
+          <div class="text-xs tracking-widest uppercase">awaiting trace</div>
+          <div class="text-[10px] text-slate-700">compile → run → trace to visualize</div>
         </div>
-        
-        <div class="frames-list">
-          {#each [...stackFrames].reverse() as frame, idx}
-            <div class="frame" class:active={idx === 0}>
-              <div class="frame-header">
-                <span class="frame-name">{frame.name}()</span>
-                {#if idx === 0}
-                  <span class="frame-badge">current</span>
+
+      <!-- ── LINKED LIST ── -->
+      {:else if activeMode === 'linkedlist'}
+        <div class="relative flex flex-col gap-12">
+          <!-- head pointer label -->
+          {#if memNodes.length > 0}
+            <div class="text-[10px] tracking-widest uppercase text-slate-500 mb-1">
+              struct Node* head → <span class="text-emerald-400">{memNodes[0]?.addr}</span>
+            </div>
+          {/if}
+
+          <div class="flex items-center gap-0 flex-wrap">
+            {#each memNodes as node, i}
+              <!-- Node box -->
+              <div
+                class="relative flex flex-col items-center cursor-pointer group"
+                on:click={() => highlightAddr = highlightAddr === node.addr ? null : node.addr}
+              >
+                <!-- HEAD / TAIL label -->
+                {#if i === 0}
+                  <div class="text-[9px] tracking-widest uppercase text-emerald-400 mb-1 opacity-80">head</div>
+                {:else if i === memNodes.length - 1}
+                  <div class="text-[9px] tracking-widest uppercase text-amber-400 mb-1 opacity-80">tail</div>
+                {:else}
+                  <div class="mb-1 h-3"></div>
                 {/if}
+
+                <!-- Cell -->
+                <div class="flex border rounded overflow-hidden transition-all duration-200
+                            {highlightAddr === node.addr
+                              ? 'border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                              : 'border-slate-700 group-hover:border-slate-500'}">
+                  <!-- data field -->
+                  <div class="w-14 h-14 flex flex-col items-center justify-center bg-[#0f1629]
+                              border-r border-slate-700 gap-0.5">
+                    <span class="text-xs text-slate-500">data</span>
+                    <span class="text-lg font-bold text-slate-100">{node.val}</span>
+                  </div>
+                  <!-- next field -->
+                  <div class="w-14 h-14 flex flex-col items-center justify-center bg-[#131a2e] gap-0.5">
+                    <span class="text-xs text-slate-500">next</span>
+                    <span class="text-[9px] text-slate-400 truncate w-12 text-center">
+                      {node.next ?? 'NULL'}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- addr tooltip -->
+                <div class="text-[9px] text-slate-600 mt-1 font-mono">{node.addr}</div>
               </div>
-              
-              <div class="frame-vars">
-                {#each Object.entries(frame.locals) as [varName, value]}
-                  {@const fullName = `${frame.name}.${varName}`}
-                  {@const isHeap = isHeapObject(value)}
-                  {@const isChanged = changedVars.has(fullName)}
-                  
-                  <div class="var-row" class:changed={isChanged}>
-                    <span class="var-name">{varName}</span>
-                    <span class="var-equals">=</span>
-                    {#if isHeap}
-                      <span class="var-ref" data-target={fullName}>
-                        <span class="ref-arrow">●→</span>
+
+              <!-- Arrow / NULL -->
+              {#if i < memNodes.length - 1}
+                <div class="flex items-center mx-1 mt-4">
+                  <div class="w-4 h-px bg-sky-600"></div>
+                  <div class="text-sky-400 text-base leading-none">›</div>
+                </div>
+              {:else}
+                <div class="flex items-center gap-1 mx-2 mt-4">
+                  <div class="w-4 h-px bg-slate-700"></div>
+                  <div class="px-2 py-0.5 border border-red-900/50 rounded text-[10px]
+                               text-red-400 bg-red-950/20 tracking-wider">NULL</div>
+                </div>
+              {/if}
+            {/each}
+
+            {#if memNodes.length === 0}
+              <div class="text-slate-600 text-xs tracking-widest">// empty list — head → NULL</div>
+            {/if}
+          </div>
+
+          <!-- Memory detail panel (on node click) -->
+          {#if highlightAddr}
+            {@const n = memNodes.find(x => x.addr === highlightAddr)}
+            {#if n}
+              <div class="mt-4 p-3 border border-emerald-800/50 rounded bg-emerald-950/20
+                           text-xs max-w-xs">
+                <div class="text-emerald-400 text-[10px] tracking-widest uppercase mb-2">node detail</div>
+                <div class="grid grid-cols-2 gap-y-1 text-slate-400">
+                  <span class="text-slate-500">addr</span><span class="text-emerald-300">{n.addr}</span>
+                  <span class="text-slate-500">data</span><span class="text-slate-200">{n.val}</span>
+                  <span class="text-slate-500">next</span><span class="text-sky-400">{n.next ?? 'NULL'}</span>
+                </div>
+              </div>
+            {/if}
+          {/if}
+        </div>
+
+      <!-- ── ARRAY ── -->
+      {:else if activeMode === 'array'}
+        <div class="flex flex-col gap-8">
+          {#each memArrays as arr}
+            <div>
+              <div class="text-[10px] tracking-widest uppercase text-slate-500 mb-2">
+                {arr.name}[{arr.cells.length}]
+              </div>
+              <div class="flex items-stretch">
+                <div class="text-slate-600 text-2xl flex items-center mr-1">[</div>
+                {#each arr.cells as cell, ci}
+                  <div class="flex flex-col items-center relative">
+                    <div class="w-12 h-12 flex items-center justify-center border-y
+                                {ci === 0 ? 'border-l rounded-l' : ''}
+                                {ci === arr.cells.length - 1 ? 'border-r rounded-r' : ''}
+                                border-slate-700 transition-all duration-200
+                                {cell.active
+                                  ? 'bg-emerald-900/30 border-emerald-700'
+                                  : 'bg-[#0f1629] hover:bg-slate-800/50'}">
+                      <span class="font-bold text-base {cell.active ? 'text-emerald-300' : 'text-slate-200'}">
+                        {cell.val}
                       </span>
-                    {:else}
-                      <span class="var-value" class:highlight={isChanged}>
-                        {formatValue(value)}
-                      </span>
+                    </div>
+                    <div class="text-[9px] text-slate-600 mt-1">{cell.idx}</div>
+                    {#if cell.active}
+                      <div class="absolute -bottom-5 text-emerald-400 text-[10px]">▲</div>
                     {/if}
                   </div>
                 {/each}
-                
-                {#if Object.keys(frame.locals).length === 0}
-                  <div class="no-vars">no local variables</div>
-                {/if}
+                <div class="text-slate-600 text-2xl flex items-center ml-1">]</div>
               </div>
             </div>
           {/each}
-        </div>
-      </div>
 
-      <!-- Right Panel: Objects (Heap) -->
-      <div class="objects-panel">
-        <div class="panel-header">
-          <span class="panel-title">Objects</span>
-          <span class="panel-subtitle">Arrays & Structs</span>
-        </div>
-        
-        <div class="objects-list">
-          {#each heapObjects as obj}
-            <div class="heap-object" id={obj.id}>
-              {#if obj.type === 'array'}
-                <div class="array-object">
-                  <div class="array-label">{obj.id.split('.').pop()}</div>
-                  <div class="array-cells">
-                    {#each obj.values as val, i}
-                      <div class="array-cell">
-                        <span class="cell-index">{i}</span>
-                        <span class="cell-value">
-                          {isCharValue(val) ? `'${String.fromCharCode(val)}'` : val}
-                        </span>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {:else if obj.type === 'struct'}
-                <div class="struct-object">
-                  <div class="struct-header">{obj.id.split('.').pop()}</div>
-                  <div class="struct-fields">
-                    {#each Object.entries(obj.fields || {}) as [fieldName, fieldVal]}
-                      <div class="struct-field">
-                        <span class="field-name">{fieldName}</span>
-                        <span class="field-value">{formatValue(fieldVal)}</span>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-            </div>
-          {/each}
-          
-          {#if heapObjects.length === 0}
-            <div class="no-objects">
-              <span>No arrays or structs yet</span>
-            </div>
+          {#if memArrays.length === 0}
+            <div class="text-slate-600 text-xs tracking-widest">// no array data in current step</div>
           {/if}
         </div>
+
+      <!-- ── STACK ── -->
+      {:else if activeMode === 'stack'}
+        <div class="flex flex-col items-center gap-0 max-w-xs mx-auto">
+          {#if stackList.length === 0}
+            <div class="text-slate-600 text-xs tracking-widest">// call stack is empty</div>
+          {:else}
+            <!-- Top of stack label -->
+            <div class="text-[9px] text-emerald-400 tracking-widest uppercase mb-1">← TOP</div>
+
+            {#each stackList as frame, fi}
+              <div class="w-full border transition-all duration-200
+                          {fi === 0
+                            ? 'border-emerald-700/60 bg-emerald-950/20 rounded-t'
+                            : fi === stackList.length - 1
+                              ? 'border-slate-700 bg-[#0f1629] rounded-b'
+                              : 'border-slate-700 bg-[#0f1629]'}
+                          border-b-0 last:border-b">
+                <div class="px-4 py-2 flex items-center justify-between border-b border-inherit">
+                  <span class="text-xs font-bold {fi === 0 ? 'text-emerald-300' : 'text-slate-300'}">
+                    {frame.name}()
+                  </span>
+                  {#if fi === 0}
+                    <span class="text-[9px] text-emerald-500 tracking-wider">active</span>
+                  {/if}
+                </div>
+                <!-- Locals -->
+                {#if Object.keys(frame.locals ?? {}).length > 0}
+                  <div class="px-4 py-2 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                    {#each Object.entries(frame.locals) as [k, v]}
+                      <span class="text-[10px] text-slate-500">{k}</span>
+                      <span class="text-[10px] text-slate-300 text-right font-mono">{v}</span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+
+            <!-- Stack base -->
+            <div class="w-full h-2 bg-slate-800 rounded-b border border-t-0 border-slate-700"></div>
+          {/if}
+        </div>
+
+      <!-- ── TREE (placeholder) ── -->
+      {:else if activeMode === 'tree'}
+        <div class="flex flex-col items-center justify-center h-40 text-slate-600 gap-2">
+          <div class="text-2xl opacity-30">⌥</div>
+          <div class="text-xs tracking-widest uppercase">BST rendering coming soon</div>
+          <div class="text-[10px]">switch to linked list or array for now</div>
+        </div>
+      {/if}
+
+    </div>
+
+    <!-- ── Registers sidebar ── -->
+    <div class="w-40 border-l border-slate-800 bg-[#0f1629] flex flex-col shrink-0">
+      <div class="px-3 py-2 border-b border-slate-800">
+        <span class="text-[9px] tracking-widest uppercase text-slate-600">Registers</span>
+      </div>
+      <div class="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+        {#each Object.entries(registers) as [reg, val]}
+          <div class="flex flex-col gap-0.5">
+            <span class="text-[9px] tracking-widest text-slate-600 uppercase">{reg}</span>
+            <span class="text-xs font-mono {regColor(reg)}">{val}</span>
+          </div>
+        {/each}
+        {#if Object.keys(registers).length === 0}
+          <div class="text-[10px] text-slate-700 tracking-wider">—</div>
+        {/if}
+      </div>
+
+      <!-- Memory summary -->
+      <div class="border-t border-slate-800 px-3 py-2">
+        <div class="text-[9px] tracking-widest uppercase text-slate-600 mb-2">Memory</div>
+        <div class="grid grid-cols-4 gap-0.5">
+          {#each Object.entries(traceStep?.memory ?? {}).slice(0, 16) as [k, _], i}
+            <div class="h-4 w-full rounded-sm transition-all duration-200
+                        {k === highlightAddr ? 'bg-emerald-500' : 'bg-slate-800 hover:bg-slate-700'}"
+                 title={k}></div>
+          {/each}
+          {#if Object.keys(traceStep?.memory ?? {}).length === 0}
+            {#each Array(16) as _}
+              <div class="h-4 w-full rounded-sm bg-slate-900 opacity-50"></div>
+            {/each}
+          {/if}
+        </div>
+        <div class="text-[9px] text-slate-700 mt-1">
+          {Object.keys(traceStep?.memory ?? {}).length} addrs
+        </div>
       </div>
     </div>
 
-    <!-- Bottom: Current Line Info -->
-    <div class="step-info">
-      <span class="step-badge">Step {traceStep.stepNumber}</span>
-      <span class="line-badge">Line {traceStep.lineNo}</span>
-      {#if currentLine}
-        <code class="current-code">{currentLine}</code>
+  </div>
+
+  <!-- ── Bottom status bar ── -->
+  <div class="flex items-center gap-4 px-4 py-1.5 border-t border-slate-800 bg-[#0f1629]
+               text-[10px] text-slate-600 shrink-0">
+    <span>ip: <span class="text-slate-400">{traceStep?.instructionPointer ?? '—'}</span></span>
+    <span>frames: <span class="text-slate-400">{stackFrames.length}</span></span>
+    <span>mode: <span class="text-slate-400">{activeMode}</span></span>
+    <span class="ml-auto">
+      {#if traceStep}
+        {new Date(traceStep.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}
+      {:else}
+        —
       {/if}
-    </div>
-  {/if}
+    </span>
+  </div>
 </div>
-
-<style>
-  .visualizer {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: #21252b;
-    color: #abb2bf;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  }
-
-  /* Empty State */
-  .empty-state {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 32px;
-    gap: 16px;
-  }
-
-  .empty-icon {
-    color: #3e4451;
-  }
-
-  .empty-state h3 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #e5e5e5;
-  }
-
-  .empty-state p {
-    margin: 0;
-    font-size: 14px;
-    color: #5c6370;
-  }
-
-  .empty-state strong {
-    color: #61afef;
-  }
-
-  .features {
-    display: flex;
-    gap: 12px;
-    margin-top: 8px;
-  }
-
-  .feature {
-    font-size: 12px;
-    padding: 4px 10px;
-    background: #282c34;
-    border-radius: 12px;
-    color: #abb2bf;
-  }
-
-  /* Main Visualization Area */
-  .visualization-area {
-    flex: 1;
-    display: flex;
-    gap: 1px;
-    background: #181a1f;
-    overflow: hidden;
-  }
-
-  /* Panel Styles */
-  .frames-panel,
-  .objects-panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    background: #21252b;
-    min-width: 0;
-  }
-
-  .panel-header {
-    padding: 12px 16px;
-    background: #282c34;
-    border-bottom: 1px solid #3e4451;
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-  }
-
-  .panel-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: #e5e5e5;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .panel-subtitle {
-    font-size: 11px;
-    color: #5c6370;
-  }
-
-  /* Frames List */
-  .frames-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .frame {
-    background: #282c34;
-    border: 1px solid #3e4451;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .frame.active {
-    border-color: #61afef;
-    box-shadow: 0 0 0 1px #61afef20;
-  }
-
-  .frame-header {
-    padding: 8px 12px;
-    background: #2c313a;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid #3e4451;
-  }
-
-  .frame-name {
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    font-weight: 600;
-    color: #61afef;
-  }
-
-  .frame-badge {
-    font-size: 10px;
-    padding: 2px 6px;
-    background: #61afef20;
-    color: #61afef;
-    border-radius: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .frame-vars {
-    padding: 8px 12px;
-  }
-
-  .var-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    transition: background 0.2s;
-  }
-
-  .var-row.changed {
-    background: #e5c07b15;
-    margin: 0 -12px;
-    padding: 4px 12px;
-  }
-
-  .var-name {
-    color: #e5e5e5;
-    min-width: 60px;
-  }
-
-  .var-equals {
-    color: #5c6370;
-  }
-
-  .var-value {
-    color: #d19a66;
-  }
-
-  .var-value.highlight {
-    color: #e5c07b;
-    font-weight: 600;
-  }
-
-  .var-ref {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .ref-arrow {
-    color: #c678dd;
-    font-size: 14px;
-  }
-
-  .no-vars {
-    font-size: 12px;
-    color: #5c6370;
-    font-style: italic;
-    padding: 4px 0;
-  }
-
-  /* Objects List */
-  .objects-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .heap-object {
-    background: #282c34;
-    border: 1px solid #3e4451;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  /* Array Object */
-  .array-object {
-    padding: 8px;
-  }
-
-  .array-label {
-    font-size: 11px;
-    color: #5c6370;
-    margin-bottom: 8px;
-    font-family: 'JetBrains Mono', monospace;
-  }
-
-  .array-cells {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px;
-  }
-
-  .array-cell {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 36px;
-    background: #2c313a;
-    border: 1px solid #3e4451;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .cell-index {
-    font-size: 9px;
-    color: #5c6370;
-    padding: 2px 4px;
-    background: #21252b;
-    width: 100%;
-    text-align: center;
-  }
-
-  .cell-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: #98c379;
-    padding: 4px 6px;
-    text-align: center;
-  }
-
-  /* Struct Object */
-  .struct-object {
-    padding: 0;
-  }
-
-  .struct-header {
-    padding: 8px 12px;
-    background: #2c313a;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: #56b6c2;
-    font-weight: 600;
-    border-bottom: 1px solid #3e4451;
-  }
-
-  .struct-fields {
-    padding: 8px 12px;
-  }
-
-  .struct-field {
-    display: flex;
-    justify-content: space-between;
-    padding: 4px 0;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-  }
-
-  .field-name {
-    color: #abb2bf;
-  }
-
-  .field-value {
-    color: #d19a66;
-  }
-
-  .no-objects {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #5c6370;
-    font-size: 13px;
-  }
-
-  /* Step Info Bar */
-  .step-info {
-    padding: 10px 16px;
-    background: #282c34;
-    border-top: 1px solid #3e4451;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .step-badge,
-  .line-badge {
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-weight: 600;
-  }
-
-  .step-badge {
-    background: #61afef20;
-    color: #61afef;
-  }
-
-  .line-badge {
-    background: #98c37920;
-    color: #98c379;
-  }
-
-  .current-code {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    color: #abb2bf;
-    background: #21252b;
-    padding: 4px 10px;
-    border-radius: 4px;
-    border: 1px solid #3e4451;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Scrollbar */
-  .frames-list::-webkit-scrollbar,
-  .objects-list::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .frames-list::-webkit-scrollbar-track,
-  .objects-list::-webkit-scrollbar-track {
-    background: #21252b;
-  }
-
-  .frames-list::-webkit-scrollbar-thumb,
-  .objects-list::-webkit-scrollbar-thumb {
-    background: #3e4451;
-    border-radius: 4px;
-  }
-
-  .frames-list::-webkit-scrollbar-thumb:hover,
-  .objects-list::-webkit-scrollbar-thumb:hover {
-    background: #5c6370;
-  }
-</style>

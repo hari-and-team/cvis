@@ -4,6 +4,9 @@
   import highlight from '$lib/highlight';
   import { currentStepIndex, editorCode, isPlaying, traceSteps } from '$lib/stores';
 
+  const LINE_HEIGHT_PX = 22;
+  const EDITOR_PADDING_PX = 12;
+
   const dispatch = createEventDispatcher<{
     trace: void;
   }>();
@@ -16,6 +19,7 @@
   let preRef: HTMLPreElement;
   let lnRef: HTMLDivElement;
   let playing = false;
+  let scrollTop = 0;
 
   $: {
     code = $editorCode;
@@ -25,6 +29,10 @@
   $: total = $traceSteps.length;
   $: curStep = $currentStepIndex;
   $: playing = $isPlaying;
+  $: isTraceMode = total > 0;
+  $: currentLineTop = hlLine
+    ? (hlLine - 1) * LINE_HEIGHT_PX + EDITOR_PADDING_PX - scrollTop
+    : null;
 
   $: {
     if ($traceSteps && $traceSteps.length > 0 && $traceSteps[$currentStepIndex]) {
@@ -36,6 +44,7 @@
 
   function syncScroll() {
     if (taRef && preRef && lnRef) {
+      scrollTop = taRef.scrollTop;
       preRef.scrollTop = taRef.scrollTop;
       preRef.scrollLeft = taRef.scrollLeft;
       lnRef.scrollTop = taRef.scrollTop;
@@ -43,6 +52,10 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if (isTraceMode) {
+      return;
+    }
+
     if (e.key === 'Tab') {
       e.preventDefault();
       const start = taRef.selectionStart;
@@ -56,6 +69,11 @@
   }
 
   function handleCodeChange() {
+    if (isTraceMode) {
+      code = $editorCode;
+      return;
+    }
+
     $editorCode = code;
     traceSteps.set([]);
   }
@@ -133,7 +151,7 @@
       {#if hlLine}
         <div
           class="current-line-highlight"
-          style="top: {(hlLine - 1) * 22 + 12}px;"
+          style="top: {currentLineTop ?? 0}px;"
         ></div>
       {/if}
       <pre
@@ -148,6 +166,8 @@
         on:scroll={syncScroll}
         spellcheck={false}
         class="code-input"
+        class:readonly-mode={isTraceMode}
+        readonly={isTraceMode}
       ></textarea>
     </div>
   </div>
@@ -401,6 +421,10 @@
 
   .code-input:focus {
     outline: none;
+  }
+
+  .code-input.readonly-mode {
+    caret-color: transparent;
   }
 
   /* Controls Panel */
