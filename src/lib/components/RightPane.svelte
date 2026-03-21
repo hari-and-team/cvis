@@ -9,7 +9,7 @@
     runtimeInput,
     scannedInput
   } from '$lib/stores';
-  import { RIGHT_PANE_TABS, type RightPaneTabId, VISUALIZER_FEATURES, OneDark } from './right-pane-config';
+  import { RIGHT_PANE_TABS, type RightPaneTabId, VISUALIZER_FEATURES } from './right-pane-config';
 
   export let traceSteps: TraceStep[] = [];
   export let currentStep: number = 0;
@@ -121,7 +121,7 @@
           </div>
         </div>
       {:else if traceSteps && traceSteps.length > 0}
-        <Visualizer traceStep={currentTraceStepData} />
+        <Visualizer traceStep={currentTraceStepData} sourceLines={sourceLines} />
       {:else}
         <div class="empty-visualizer">
           <div class="viz-icon-wrapper">

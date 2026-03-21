@@ -16,6 +16,12 @@ A web-based visualization tool for learning Data Structures and Algorithms in C.
 
 ---
 
+## Architecture Guide
+
+For a module-by-module map of the codebase, see `CODEBASE.md`.
+
+---
+
 ## Development Setup
 
 ### Prerequisites
@@ -116,20 +122,20 @@ cvis/
 ├── src/                      # SvelteKit frontend
 │   ├── lib/
 │   │   ├── components/       # Svelte components
-│   │   ├── types.ts          # TypeScript interfaces
 │   │   ├── api.ts            # Backend API client
-│   │   └── stores.ts         # Svelte reactive stores
+│   │   ├── stores.ts         # App state stores (editor/execution/visualizer)
+│   │   ├── layout/run-actions.ts # Compile/run and trace orchestration
+│   │   └── types.ts          # TypeScript interfaces
 │   └── routes/               # SvelteKit routes
 ├── server/                   # Express backend
-│   ├── Dockerfile            # Docker configuration
-│   ├── index.js              # Express server and routes
-│   ├── lib/                  # Modular backend services
-│   │   ├── gcc-path.js        # GCC discovery/verification
-│   │   ├── compile-c.js       # C compilation logic
-│   │   ├── run-binary.js      # Binary execution logic
-│   │   └── trace-execution.js # Deterministic trace generation
+│   ├── index.js              # Server bootstrap/startup
+│   ├── app.js                # Express app assembly
+│   ├── config/               # Shared limits/config constants
+│   ├── routes/index.js       # Health + API route handlers
+│   ├── lib/                  # Compiler/execution/interpreter services
 │   └── package.json          # Backend dependencies
 ├── docker-compose.yml        # Docker Compose configuration
+├── CODEBASE.md               # Module ownership and navigation guide
 ├── .dockerignore             # Docker ignore rules
 └── package.json              # Root package.json
 ```
@@ -184,8 +190,13 @@ Execute a compiled binary.
 }
 ```
 
+Notes:
+- `binaryPath` should be the value returned by `POST /api/compile`.
+- `input` must be a string when provided.
+
 ### `POST /api/trace`
-Trace execution with breakpoints (future implementation).
+Trace execution using the built-in C interpreter.
+Optional `breakpoints` can be provided to filter returned steps by source line.
 
 **Request:**
 ```json
@@ -199,8 +210,18 @@ Trace execution with breakpoints (future implementation).
 ```json
 {
   "success": true,
-  "steps": [],
-  "totalSteps": 0,
+  "steps": [
+    {
+      "stepNumber": 1,
+      "lineNo": 3,
+      "registers": { "pc": 3, "sp": 4032, "fp": 4096 },
+      "memory": {},
+      "stackFrames": [{ "name": "main", "locals": {} }],
+      "instructionPointer": "line:3",
+      "timestamp": 1710000000001
+    }
+  ],
+  "totalSteps": 1,
   "errors": []
 }
 ```
@@ -216,6 +237,18 @@ Health check endpoint.
   "environment": "docker",
   "timestamp": "2024-03-18T10:00:00.000Z"
 }
+```
+
+---
+
+## Code Quality
+
+```bash
+# JS lint + Svelte/TypeScript checks
+npm run lint
+
+# Svelte/TypeScript diagnostics only
+npm run check
 ```
 
 ---

@@ -20,6 +20,7 @@ interface CompileRunActionParams {
 
 interface TraceActionParams {
   code: string;
+  breakpoints?: number[];
 }
 
 interface TraceActionResult {
@@ -45,6 +46,8 @@ export async function runCompileAndRunAction({
 
     isRunning.set(true);
     errorMessage.set(null);
+    lastExecutionResult.set(null);
+    lastBinaryPath.set(null);
 
     isCompiling.set(true);
     const compileResult = await compileCode({ code });
@@ -56,15 +59,22 @@ export async function runCompileAndRunAction({
       return;
     }
 
-    if (compileResult.binary) {
-      lastBinaryPath.set(compileResult.binary);
-      const stdin = hasScannedInput ? scannedInput : runtimeInput;
-      const executionResult = await runBinary({
-        binaryPath: compileResult.binary,
-        args: [],
-        input: stdin
-      });
-      lastExecutionResult.set(executionResult);
+    if (!compileResult.binary) {
+      errorMessage.set('Compilation succeeded, but no executable binary was returned.');
+      return;
+    }
+
+    lastBinaryPath.set(compileResult.binary);
+    const stdin = hasScannedInput ? scannedInput : runtimeInput;
+    const executionResult = await runBinary({
+      binaryPath: compileResult.binary,
+      args: [],
+      input: stdin
+    });
+    lastExecutionResult.set(executionResult);
+
+    if (executionResult.exitCode !== 0 && executionResult.stderr) {
+      errorMessage.set(executionResult.stderr);
     }
   } catch (err) {
     const message = getErrorMessage(err, 'An error occurred');
@@ -76,11 +86,16 @@ export async function runCompileAndRunAction({
   }
 }
 
-export async function runTraceAction({ code }: TraceActionParams): Promise<TraceActionResult> {
+export async function runTraceAction({
+  code,
+  breakpoints = []
+}: TraceActionParams): Promise<TraceActionResult> {
   try {
     const validationError = validateTraceRequest(code);
     if (validationError) {
       errorMessage.set(validationError);
+      traceSteps.set([]);
+      currentStepIndex.set(0);
       return { traceErr: validationError };
     }
 
@@ -88,7 +103,7 @@ export async function runTraceAction({ code }: TraceActionParams): Promise<Trace
 
     const result = await traceCode({
       code,
-      breakpoints: []
+      breakpoints
     });
 
     if (result.success) {
@@ -97,10 +112,17 @@ export async function runTraceAction({ code }: TraceActionParams): Promise<Trace
       return { traceErr: null };
     }
 
-    return { traceErr: result.errors.join('\n') || 'Trace failed' };
+    const traceErr = result.errors.join('\n') || 'Trace failed';
+    traceSteps.set([]);
+    currentStepIndex.set(0);
+    errorMessage.set(traceErr);
+    return { traceErr };
   } catch (err) {
     const message = getErrorMessage(err, 'An error occurred during tracing');
     console.error('Trace error:', err);
+    traceSteps.set([]);
+    currentStepIndex.set(0);
+    errorMessage.set(message);
     return { traceErr: message };
   }
 }

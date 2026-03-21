@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Code2, Check, Copy, Loader2, Play } from 'lucide-svelte';
-  import { TH } from '$lib/theme';
-  import { isCompiling, isRunning } from '$lib/stores';
+  import { isRunning } from '$lib/stores';
   import { createEventDispatcher } from 'svelte';
 
   export let code: string = '';

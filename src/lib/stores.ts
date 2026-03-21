@@ -30,7 +30,7 @@ export const runtimeInput = writable<string>('');
 export const scannedInput = writable<string>('');
 export const hasScannedInput = writable<boolean>(false);
 
-// Derived: current trace step
+// Derived state
 export const currentTraceStep = derived(
   [traceSteps, currentStepIndex],
   ([$steps, $index]) => $steps[$index] || null

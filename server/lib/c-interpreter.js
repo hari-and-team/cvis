@@ -30,20 +30,17 @@ function tokenize(code) {
   const tokens = [];
   let i = 0;
   let line = 1;
-  let col = 1;
 
   const peek = (n = 0) => code[i + n] || '';
   const advance = () => {
     const ch = code[i++];
-    if (ch === '\n') { line++; col = 1; }
-    else { col++; }
+    if (ch === '\n') { line++; }
     return ch;
   };
 
   while (i < code.length) {
     const ch = peek();
     const startLine = line;
-    const startCol = col;
 
     // Whitespace
     if (/\s/.test(ch)) { advance(); continue; }
@@ -641,7 +638,7 @@ class Interpreter {
     }
   }
 
-  recordStep(lineNo, description = '') {
+  recordStep(lineNo, _description = '') {
     if (this.stepCount++ > this.maxSteps) {
       throw new Error('Maximum steps exceeded (possible infinite loop)');
     }
@@ -991,7 +988,29 @@ export async function traceExecution(code, breakpoints = []) {
     const parser = new Parser(tokens);
     const ast = parser.parseProgram();
     const interpreter = new Interpreter(ast);
-    return interpreter.run();
+    const result = interpreter.run();
+
+    if (!result.success) {
+      return result;
+    }
+
+    const maxLine = typeof code === 'string' ? code.split(/\r?\n/).length : 0;
+    const validBreakpoints = Array.isArray(breakpoints)
+      ? [...new Set(breakpoints.filter((lineNo) => Number.isInteger(lineNo) && lineNo > 0 && lineNo <= maxLine))]
+      : [];
+
+    if (validBreakpoints.length === 0) {
+      return result;
+    }
+
+    const breakpointSet = new Set(validBreakpoints);
+    const filteredSteps = result.steps.filter((step) => breakpointSet.has(step.lineNo));
+
+    return {
+      ...result,
+      steps: filteredSteps,
+      totalSteps: filteredSteps.length
+    };
   } catch (err) {
     return {
       success: false,

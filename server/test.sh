@@ -80,7 +80,7 @@ else
 fi
 echo ""
 
-# Test 5: Trace execution (stub)
+# Test 5: Trace execution (interpreter)
 echo "Test 5: Trace execution"
 cat > "$TEMP_DIR/trace.json" << 'EOF'
 {
@@ -94,9 +94,31 @@ TRACE_RESULT=$(curl -s -X POST "$API_BASE/api/trace" \
 echo "$TRACE_RESULT" | python3 -m json.tool
 SUCCESS=$(echo "$TRACE_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('success', False))")
 if [ "$SUCCESS" = "True" ]; then
-  echo "✓ Trace endpoint working (stub)"
+  echo "✓ Trace endpoint working"
 else
   echo "✗ Trace failed"
+  exit 1
+fi
+echo ""
+
+# Test 6: Reject unsafe binary path
+echo "Test 6: Reject unsafe binary path"
+cat > "$TEMP_DIR/unsafe-run.json" << 'EOF'
+{
+  "binaryPath": "/bin/ls",
+  "args": [],
+  "input": ""
+}
+EOF
+UNSAFE_RESULT=$(curl -s -X POST "$API_BASE/api/run" \
+  -H "Content-Type: application/json" \
+  -d @"$TEMP_DIR/unsafe-run.json")
+echo "$UNSAFE_RESULT" | python3 -m json.tool
+UNSAFE_EXIT=$(echo "$UNSAFE_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('exitCode', 0))")
+if [ "$UNSAFE_EXIT" = "126" ]; then
+  echo "✓ Unsafe binary path correctly rejected"
+else
+  echo "✗ Unsafe binary path was not rejected"
   exit 1
 fi
 echo ""
