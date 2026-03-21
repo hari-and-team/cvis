@@ -11,3 +11,24 @@
   - keep algorithm content/catalog separate from engine/runtime
   - standardize trace-event contracts between interpreter and UI
   - reference: https://github.com/algorithm-visualizer/algorithm-visualizer
+
+## Planned: Mentor-Guided Learning Workflow
+- [ ] Add account system with roles: `student`, `mentor`, `staff`.
+- [ ] Support explicit student-to-mentor assignment so each learner has a designated guide.
+- [ ] Let mentors/staff teach a concept and assign a curated problem path for that concept.
+- [ ] Let students either choose problems manually or ask AI to select a personalized set.
+- [ ] Add an AI Mentor tab that gives small milestones/checkpoints per problem.
+- [ ] Keep AI guidance incremental to reduce overwhelm while solving LeetCode-style problems.
+- [ ] Add mentor visibility dashboards: student progress, stuck points, milestone completion.
+
+## Planned: AI Milestone Problem Support
+- [ ] Build “problem decomposition” prompts for AI to generate step-by-step milestones.
+- [ ] Add hint ladder modes: tiny hint, guided hint, deeper explanation.
+- [ ] Add solve-flow checkpoints (input understanding, approach, implementation, validation).
+- [ ] Add post-problem reflection prompts to reinforce DSA concepts.
+
+## Data Safety (No Data Loss)
+- [ ] Autosave code and milestone progress continuously.
+- [ ] Restore session after reload/reconnect (last open problem + active milestone).
+- [ ] Store local backup snapshot in browser storage for offline recovery.
+- [ ] Add server sync conflict handling and recovery UI for edits from multiple devices.
