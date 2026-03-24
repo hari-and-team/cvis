@@ -26,6 +26,8 @@ For Windows, prefer running the backend through Docker Desktop from the repo roo
 npm run docker:up:build
 ```
 
+If teammates do not have GCC or Docker, this backend can also be run once on a shared machine while they connect to it from their own frontend instances.
+
 ## Usage
 
 ### Start Server
@@ -51,6 +53,28 @@ This starts both:
 - backend on `http://localhost:3001`
 
 The backend container includes GCC plus the runtime tools needed for interactive sessions (`stdbuf` and `script`).
+
+### Shared backend for teammates
+
+You can host one backend for multiple teammate frontends.
+
+Example:
+
+```bash
+CORS_ORIGINS=http://localhost:5173,http://192.168.1.20:5173 npm start
+```
+
+Or allow all origins on a trusted internal network during development:
+
+```bash
+CORS_ORIGINS=* npm start
+```
+
+Teammates then set this in the frontend repo root:
+
+```bash
+VITE_API_BASE=http://YOUR-SHARED-BACKEND:3001
+```
 
 ### Run Tests
 

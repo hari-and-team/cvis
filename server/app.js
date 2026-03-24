@@ -4,19 +4,59 @@ import { DEV_CORS_ORIGINS, JSON_BODY_LIMIT } from './config/constants.js';
 import { getErrorMessage } from './lib/http/request-validation.js';
 import { registerRoutes } from './routes/index.js';
 
-function resolveCorsOrigin() {
-  if (process.env.NODE_ENV === 'production') {
-    return process.env.FRONTEND_URL;
+function parseCorsOrigins(rawValue) {
+  if (!rawValue || typeof rawValue !== 'string') {
+    return [];
   }
 
-  return DEV_CORS_ORIGINS;
+  return rawValue
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function resolveAllowedOrigins() {
+  const configured = parseCorsOrigins(process.env.CORS_ORIGINS ?? process.env.FRONTEND_URL ?? '');
+  const allowsAll = configured.includes('*');
+
+  if (allowsAll) {
+    return true;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    return configured;
+  }
+
+  return Array.from(new Set([...DEV_CORS_ORIGINS, ...configured]));
+}
+
+function createCorsOriginResolver() {
+  const allowedOrigins = resolveAllowedOrigins();
+
+  if (allowedOrigins === true) {
+    return true;
+  }
+
+  return (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  };
 }
 
 export function createApp() {
   const app = express();
 
   app.use(cors({
-    origin: resolveCorsOrigin(),
+    origin: createCorsOriginResolver(),
     credentials: true
   }));
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
