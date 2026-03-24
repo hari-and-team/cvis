@@ -35,6 +35,14 @@ export interface RunSessionStartRequest {
 export interface RunSessionStartResult {
   success: boolean;
   sessionId?: string;
+  status?: RunSessionStatus;
+  done?: boolean;
+  inputClosed?: boolean;
+  timedOut?: boolean;
+  outputLimitHit?: boolean;
+  stopRequested?: boolean;
+  completionReason?: string | null;
+  exitSignal?: string | null;
   error?: string;
 }
 
@@ -50,18 +58,36 @@ export interface RunSessionInputResult {
 
 export interface RunSessionEofResult {
   success: boolean;
+  status?: RunSessionStatus;
+  inputClosed?: boolean;
   error?: string;
 }
+
+export type RunSessionStatus =
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'completed'
+  | 'failed'
+  | 'timed_out'
+  | 'output_limited';
 
 export interface RunSessionPollResult {
   success: boolean;
   sessionId: string;
+  status?: RunSessionStatus;
   output: string;
   stdout: string;
   stderr: string;
   done: boolean;
   exitCode: number | null;
   executionTime: number;
+  inputClosed?: boolean;
+  timedOut?: boolean;
+  outputLimitHit?: boolean;
+  stopRequested?: boolean;
+  completionReason?: string | null;
+  exitSignal?: string | null;
   error?: string;
 }
 
@@ -69,6 +95,7 @@ export interface RunSessionPollResult {
 export interface TraceRequest {
   code: string;
   breakpoints?: number[];  // line numbers
+  input?: string;
 }
 
 export interface StackFrame {
@@ -76,12 +103,20 @@ export interface StackFrame {
   locals: Record<string, any>;
 }
 
+export interface TraceRuntimeSnapshot {
+  globals: Record<string, any>;
+  frames: StackFrame[];
+  flatMemory: Record<string, any>;
+}
+
 export interface TraceStep {
   stepNumber: number;
   lineNo: number;
+  description?: string;
   registers: Record<string, number>;
   memory: Record<string, any>;
   stackFrames?: StackFrame[];  // Call stack with local variables
+  runtime?: TraceRuntimeSnapshot;
   instructionPointer: string;
   timestamp: number;
 }

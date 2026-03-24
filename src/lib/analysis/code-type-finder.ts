@@ -18,6 +18,7 @@ export interface SectionTypeInsight {
   matchedSignals: string[];
   estimatedTimeComplexity: string;
   estimatedSpaceComplexity: string;
+  complexityReasoning: string[];
   notes: string[];
 }
 
@@ -48,6 +49,9 @@ export interface CodeTypeReport {
   candidates: ProgramIntentCandidate[];
   intentBands: IntentBand[];
   sections: SectionTypeInsight[];
+  overallTimeComplexity: string;
+  overallSpaceComplexity: string;
+  overallComplexityReasoning: string[];
   recommendations: PracticeRecommendation[];
 }
 
@@ -532,51 +536,125 @@ function loopSignals(source: string): { loopCount: number; nestedLoop: boolean }
 function estimateComplexity(sectionSource: string, intent: ProgramIntentType): {
   time: string;
   space: string;
+  reasoning: string[];
 } {
   const { loopCount, nestedLoop } = loopSignals(sectionSource);
   const hasRecursion = /[A-Za-z_]\w*\s*\([^;]*\)[\s\S]{0,240}\breturn\s+[A-Za-z_]\w*\s*\(/.test(sectionSource);
   const hasMatrix = /\[[^\]]+\]\[[^\]]+\]/.test(sectionSource);
   const hasHeapAllocs = /\bmalloc\s*\(|\bcalloc\s*\(/.test(sectionSource);
+  const reasoning: string[] = [];
 
   let time = 'O(n)';
   let space = 'O(1)';
 
   if (intent === 'searching') {
     time = /\b(low|high|mid)\b/.test(sectionSource) ? 'O(log n)' : 'O(n)';
+    reasoning.push(
+      time === 'O(log n)'
+        ? 'Search window variables like `low`, `high`, and `mid` suggest the work halves each round.'
+        : 'The search pattern still scans values linearly through the input.'
+    );
   } else if (intent === 'sorting') {
     time = nestedLoop ? 'O(n^2)' : 'O(n log n)';
+    reasoning.push(
+      nestedLoop
+        ? 'Nested comparison loops point to repeated pairwise work across the array.'
+        : 'The sort signals fit divide-and-conquer or heap-style sorting more than simple quadratic passes.'
+    );
   } else if (intent === 'dynamic-programming') {
     time = hasMatrix || nestedLoop ? 'O(n^2)' : 'O(n)';
     space = hasMatrix ? 'O(n^2)' : 'O(n)';
+    reasoning.push(
+      hasMatrix || nestedLoop
+        ? 'The DP state is revisited across two dimensions or nested transitions.'
+        : 'The DP state grows roughly once per input position.'
+    );
+    reasoning.push(
+      hasMatrix
+        ? 'A 2D DP table keeps state for row/column-style subproblems.'
+        : 'The extra memory comes from storing reusable subproblem answers.'
+    );
   } else if (intent === 'graph') {
     time = 'O(V + E)';
     space = 'O(V)';
+    reasoning.push('Graph traversal usually touches each vertex and edge at most once.');
+    reasoning.push('Visited-state tracking or traversal queues/stacks add graph-sized auxiliary memory.');
   } else if (intent === 'tree') {
     time = loopCount > 0 || hasRecursion ? 'O(n)' : 'O(log n)';
     space = hasRecursion ? 'O(h)' : 'O(1)';
+    reasoning.push(
+      loopCount > 0 || hasRecursion
+        ? 'The section appears to visit nodes across the tree structure.'
+        : 'The logic looks closer to a bounded BST lookup than a full traversal.'
+    );
+    if (hasRecursion) {
+      reasoning.push('Recursive tree calls add call-stack usage proportional to tree height.');
+    }
   } else if (intent === 'matrix') {
     time = nestedLoop ? 'O(r * c)' : 'O(n)';
     space = 'O(1)';
+    reasoning.push(
+      nestedLoop
+        ? 'Nested row/column traversal suggests visiting each matrix cell once.'
+        : 'The matrix logic looks like a single linear sweep rather than a full 2D pass.'
+    );
+  } else if (intent === 'stack' || intent === 'queue') {
+    time = loopCount > 0 ? 'O(n)' : 'O(1)';
+    space = 'O(1)';
+    reasoning.push(
+      loopCount > 0
+        ? 'The code iterates across stored items, so operations scale with structure size.'
+        : 'Push/pop or enqueue/dequeue operations appear constant-time here.'
+    );
   } else if (intent === 'recursion') {
     time = 'O(branch^depth)';
     space = 'O(depth)';
+    reasoning.push('Recursive branching suggests the work expands with the recursion tree.');
+    reasoning.push('The call stack grows with recursion depth.');
   } else if (intent === 'linked-list') {
     time = 'O(n)';
     space = 'O(1)';
+    reasoning.push('Linked-list traversal usually advances node by node through the list.');
   } else if (nestedLoop) {
     time = 'O(n^2)';
+    reasoning.push('Nested loops dominate the section and suggest quadratic work.');
+  } else if (loopCount > 0) {
+    reasoning.push('A single main loop suggests linear work over the input.');
+  } else {
+    reasoning.push('No large repeated traversal is obvious, so the section looks close to constant or linear work.');
   }
 
   if (hasHeapAllocs && space === 'O(1)') {
     space = 'O(n)';
+    reasoning.push('Dynamic allocation suggests additional memory that can grow with input size.');
   }
 
-  return { time, space };
+  if (reasoning.length === 0) {
+    reasoning.push('The estimate is based on the dominant loop, recursion, and allocation signals in this section.');
+  }
+
+  return { time, space, reasoning: reasoning.slice(0, 3) };
 }
 
-function detectNotes(sectionSource: string, sectionTitle: string): string[] {
+function summarizeSignals(signals: string[]): string | null {
+  const usefulSignals = signals.filter(Boolean).slice(0, 2);
+  if (usefulSignals.length === 0) return null;
+  if (usefulSignals.length === 1) return usefulSignals[0];
+  return `${usefulSignals[0]} and ${usefulSignals[1]}`;
+}
+
+function detectNotes(
+  sectionSource: string,
+  sectionTitle: string,
+  prediction: ReturnType<typeof predictProgramIntent>
+): string[] {
   const notes: string[] = [];
   const compact = sectionSource.replace(/\s+/g, ' ');
+  const whyDetected = summarizeSignals(prediction.matchedSignals);
+
+  if (whyDetected) {
+    notes.push(`Why detected: ${whyDetected}.`);
+  }
 
   if (/\bwhile\s*\(\s*(1|true)\s*\)/.test(compact) && !/\bbreak\s*;/.test(compact)) {
     notes.push('Potential infinite loop: `while(1)` has no obvious `break`.');
@@ -639,6 +717,73 @@ function pickRecommendations(primaryIntent: ProgramIntentType, fallbackIntent: P
   return picked;
 }
 
+const COMPLEXITY_ORDER: Record<string, number> = {
+  'O(1)': 1,
+  'O(log n)': 2,
+  'O(h)': 2,
+  'O(depth)': 3,
+  'O(n)': 4,
+  'O(V + E)': 4,
+  'O(r * c)': 5,
+  'O(n log n)': 5,
+  'O(n^2)': 6,
+  'O(branch^depth)': 7
+};
+
+function compareComplexity(left: string, right: string): number {
+  return (COMPLEXITY_ORDER[left] ?? 0) - (COMPLEXITY_ORDER[right] ?? 0);
+}
+
+function summarizeOverallComplexity(sections: SectionTypeInsight[]): {
+  time: string;
+  space: string;
+  reasoning: string[];
+} {
+  if (sections.length === 0) {
+    return {
+      time: 'O(n)',
+      space: 'O(1)',
+      reasoning: ['No specific function sections were detected, so the estimate falls back to a simple linear program scan.']
+    };
+  }
+
+  const dominantSection =
+    sections.find((section) => section.title === 'main') ??
+    [...sections].sort((left, right) => {
+      if (right.confidence !== left.confidence) {
+        return right.confidence - left.confidence;
+      }
+      return (right.endLine - right.startLine) - (left.endLine - left.startLine);
+    })[0];
+
+  let overallTime = dominantSection.estimatedTimeComplexity;
+  let overallSpace = dominantSection.estimatedSpaceComplexity;
+
+  for (const section of sections) {
+    if (compareComplexity(section.estimatedTimeComplexity, overallTime) > 0) {
+      overallTime = section.estimatedTimeComplexity;
+    }
+    if (compareComplexity(section.estimatedSpaceComplexity, overallSpace) > 0) {
+      overallSpace = section.estimatedSpaceComplexity;
+    }
+  }
+
+  const reasoning = [
+    `Overall time is anchored by ${dominantSection.title === 'main' ? '`main()`' : `the \`${dominantSection.title}\` section`} and any heavier helper sections it calls.`,
+    `The slowest detected section reaches ${overallTime}, while peak extra memory is estimated at ${overallSpace}.`
+  ];
+
+  if (dominantSection.complexityReasoning.length > 0) {
+    reasoning.push(dominantSection.complexityReasoning[0]);
+  }
+
+  return {
+    time: overallTime,
+    space: overallSpace,
+    reasoning
+  };
+}
+
 export function analyzeCodeType(code: string): CodeTypeReport {
   const normalized = code.trim();
   if (normalized.length === 0) {
@@ -650,6 +795,11 @@ export function analyzeCodeType(code: string): CodeTypeReport {
       candidates: [{ intent: 'generic', label: INTENT_LABELS.generic, score: 1 }],
       intentBands: [{ intent: 'generic', label: INTENT_LABELS.generic, score: 1, normalized: 1 }],
       sections: [],
+      overallTimeComplexity: 'O(n)',
+      overallSpaceComplexity: 'O(1)',
+      overallComplexityReasoning: [
+        'The file is empty or too small to infer a stronger complexity profile.'
+      ],
       recommendations: PROBLEM_BANK.generic
     };
   }
@@ -680,13 +830,27 @@ export function analyzeCodeType(code: string): CodeTypeReport {
       matchedSignals: prediction.matchedSignals,
       estimatedTimeComplexity: complexity.time,
       estimatedSpaceComplexity: complexity.space,
-      notes: detectNotes(section.source, section.title)
+      complexityReasoning: complexity.reasoning,
+      notes: detectNotes(section.source, section.title, prediction)
     };
   });
 
+  const overallComplexity = summarizeOverallComplexity(sections);
+
   const intentBands = buildIntentBands(sectionPredictions);
-  const secondIntent = programPrediction.candidates[1]?.intent ?? 'generic';
-  const recommendations = pickRecommendations(programPrediction.primaryIntent, secondIntent);
+  const recommendationPrimary =
+    programPrediction.primaryIntent !== 'generic'
+      ? programPrediction.primaryIntent
+      : intentBands.find((band) => band.intent !== 'generic')?.intent ?? 'generic';
+  const recommendationFallback =
+    programPrediction.candidates.find(
+      (candidate) => candidate.intent !== 'generic' && candidate.intent !== recommendationPrimary
+    )?.intent ??
+    intentBands.find(
+      (band) => band.intent !== 'generic' && band.intent !== recommendationPrimary
+    )?.intent ??
+    'generic';
+  const recommendations = pickRecommendations(recommendationPrimary, recommendationFallback);
 
   return {
     generatedAt: Date.now(),
@@ -696,6 +860,9 @@ export function analyzeCodeType(code: string): CodeTypeReport {
     candidates: programPrediction.candidates,
     intentBands,
     sections,
+    overallTimeComplexity: overallComplexity.time,
+    overallSpaceComplexity: overallComplexity.space,
+    overallComplexityReasoning: overallComplexity.reasoning,
     recommendations
   };
 }

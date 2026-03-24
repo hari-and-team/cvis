@@ -635,7 +635,7 @@ class Parser {
 // ============================================================================
 
 class Interpreter {
-  constructor(ast, maxSteps = 10000) {
+  constructor(ast, maxSteps = 10000, input = '') {
     this.ast = ast;
     this.maxSteps = maxSteps;
     this.steps = [];
@@ -651,6 +651,121 @@ class Interpreter {
     this.breakFlag = false;
     this.continueFlag = false;
     this.returnValue = null;
+
+    this.stdin = typeof input === 'string' ? input : '';
+    this.stdinCursor = 0;
+  }
+
+  skipInputWhitespace() {
+    while (this.stdinCursor < this.stdin.length && /\s/.test(this.stdin[this.stdinCursor])) {
+      this.stdinCursor += 1;
+    }
+  }
+
+  readInputToken() {
+    this.skipInputWhitespace();
+    if (this.stdinCursor >= this.stdin.length) {
+      return null;
+    }
+
+    const start = this.stdinCursor;
+    while (this.stdinCursor < this.stdin.length && !/\s/.test(this.stdin[this.stdinCursor])) {
+      this.stdinCursor += 1;
+    }
+    return this.stdin.slice(start, this.stdinCursor);
+  }
+
+  readInputChar() {
+    if (this.stdinCursor >= this.stdin.length) {
+      return null;
+    }
+    const ch = this.stdin[this.stdinCursor];
+    this.stdinCursor += 1;
+    return ch;
+  }
+
+  readScanfValue(specifier) {
+    const spec = specifier.toLowerCase();
+
+    if (spec === 'c') {
+      return this.readInputChar();
+    }
+
+    const token = this.readInputToken();
+    if (token === null) {
+      return null;
+    }
+
+    if (spec === 'd' || spec === 'i' || spec === 'u' || spec === 'o' || spec === 'x') {
+      const parsed = Number.parseInt(token, spec === 'x' ? 16 : 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    if (spec === 'f' || spec === 'e' || spec === 'g' || spec === 'a') {
+      const parsed = Number.parseFloat(token);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    if (spec === 's') {
+      return token;
+    }
+
+    return token;
+  }
+
+  parseScanfSpecifiers(formatString) {
+    const specs = [];
+    for (let i = 0; i < formatString.length; i += 1) {
+      if (formatString[i] !== '%') {
+        continue;
+      }
+
+      const next = formatString[i + 1];
+      if (next === '%') {
+        i += 1;
+        continue;
+      }
+
+      let cursor = i + 1;
+      while (cursor < formatString.length && /[\d*\s]/.test(formatString[cursor])) {
+        cursor += 1;
+      }
+      while (cursor < formatString.length && /[hlLzjt]/.test(formatString[cursor])) {
+        cursor += 1;
+      }
+
+      if (cursor < formatString.length) {
+        specs.push(formatString[cursor]);
+        i = cursor;
+      }
+    }
+
+    return specs;
+  }
+
+  assignScanfTarget(targetExpr, value) {
+    const normalizedTarget =
+      targetExpr?.type === 'Unary' && targetExpr.op === '&' ? targetExpr.operand : targetExpr;
+
+    if (!normalizedTarget) {
+      return false;
+    }
+
+    if (normalizedTarget.type === 'Identifier') {
+      this.setVar(normalizedTarget.name, value);
+      return true;
+    }
+
+    if (normalizedTarget.type === 'Index' && normalizedTarget.object?.type === 'Identifier') {
+      const arr = this.getVar(normalizedTarget.object.name);
+      const idx = this.evaluate(normalizedTarget.index);
+      if (Array.isArray(arr) && Number.isInteger(idx) && idx >= 0 && idx < arr.length) {
+        arr[idx] = value;
+        return true;
+      }
+    }
+
+    return false;
   }
 
   run() {
@@ -689,14 +804,20 @@ class Interpreter {
     }
   }
 
-  recordStep(lineNo, _description = '') {
+  recordStep(lineNo, description = '') {
     if (this.stepCount++ > this.maxSteps) {
       throw new Error('Maximum steps exceeded (possible infinite loop)');
     }
 
-    // Collect all variables: globals + all stack frames
-    const memory = { ...this.globalVars };
-    for (const frame of this.callStack) {
+    const globals = { ...this.globalVars };
+    const frames = this.callStack.map((frame) => ({
+      name: frame.name,
+      locals: { ...frame.locals }
+    }));
+
+    // Keep a flattened memory map for existing consumers.
+    const memory = { ...globals };
+    for (const frame of frames) {
       for (const [k, v] of Object.entries(frame.locals)) {
         memory[`${frame.name}.${k}`] = v;
       }
@@ -709,21 +830,26 @@ class Interpreter {
       fp: this.callStack.length > 0 ? 4096 - (this.callStack.length - 1) * 64 : 4096
     };
 
-    // Build call stack representation (include globals as a pseudo-frame)
+    const runtime = {
+      globals,
+      frames,
+      flatMemory: memory
+    };
+
+    // Preserve the older pseudo-global frame shape for compatibility.
     const stackFrames = [
-      { name: 'global', locals: { ...this.globalVars } },
-      ...this.callStack.map(frame => ({
-        name: frame.name,
-        locals: { ...frame.locals }
-      }))
+      { name: 'global', locals: globals },
+      ...frames
     ];
 
     this.steps.push({
       stepNumber: this.steps.length + 1,
       lineNo,
+      description,
       registers,
       memory,
       stackFrames,
+      runtime,
       instructionPointer: `line:${lineNo}`,
       timestamp: Date.now()
     });
@@ -1017,8 +1143,25 @@ class Interpreter {
         }
         
         if (funcName === 'scanf') {
-          // Simplified - just return 0
-          return 0;
+          const format = String(node.args[0] ? this.evaluate(node.args[0]) : '');
+          const specs = this.parseScanfSpecifiers(format);
+          let assigned = 0;
+          let argIndex = 1;
+
+          for (const spec of specs) {
+            if (argIndex >= node.args.length) break;
+            const readValue = this.readScanfValue(spec);
+            if (readValue === null) {
+              break;
+            }
+
+            if (this.assignScanfTarget(node.args[argIndex], readValue)) {
+              assigned += 1;
+            }
+            argIndex += 1;
+          }
+
+          return assigned;
         }
 
         // User-defined function
@@ -1059,13 +1202,13 @@ class Interpreter {
 // MAIN EXPORT
 // ============================================================================
 
-export async function traceExecution(code, breakpoints = []) {
+export async function traceExecution(code, breakpoints = [], input = '') {
   try {
     const rawTokens = tokenize(code);
     const tokens = applyDefines(rawTokens);
     const parser = new Parser(tokens);
     const ast = parser.parseProgram();
-    const interpreter = new Interpreter(ast);
+    const interpreter = new Interpreter(ast, 10000, input);
     const result = interpreter.run();
 
     if (!result.success) {

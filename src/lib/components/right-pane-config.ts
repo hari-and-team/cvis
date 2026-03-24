@@ -17,7 +17,7 @@ export const OneDark = {
   orange: '#d19a66',
 } as const;
 
-export type RightPaneTabId = 'output' | 'visualizer' | 'analysis';
+export type RightPaneTabId = 'console' | 'visualizer' | 'analysis';
 
 export const RIGHT_PANE_TABS: Array<{
   id: RightPaneTabId;
@@ -25,7 +25,7 @@ export const RIGHT_PANE_TABS: Array<{
   Icon: typeof Terminal;
   color: string;
 }> = [
-  { id: 'output', label: 'Output', Icon: Terminal, color: OneDark.green },
+  { id: 'console', label: 'Console', Icon: Terminal, color: OneDark.green },
   { id: 'visualizer', label: 'Visualizer', Icon: Eye, color: OneDark.blue },
   { id: 'analysis', label: 'Analysis', Icon: ListTree, color: OneDark.purple }
 ];

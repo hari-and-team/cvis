@@ -14,21 +14,31 @@ const SCRIPT_PATH = SCRIPT_BINARIES.find((candidate) => fs.pathExistsSync(candid
 
 const sessions = new Map();
 
+const SESSION_STATUS = Object.freeze({
+  running: 'running',
+  stopping: 'stopping',
+  stopped: 'stopped',
+  completed: 'completed',
+  failed: 'failed',
+  timedOut: 'timed_out',
+  outputLimited: 'output_limited'
+});
+
 function shellQuote(arg) {
   const escaped = String(arg).replace(/'/g, "'\"'\"'");
   return `'${escaped}'`;
 }
 
 function spawnRunProcess(binaryPath, normalizedArgs) {
+  if (STDBUF_PATH) {
+    const child = spawn(STDBUF_PATH, ['-o0', '-e0', binaryPath, ...normalizedArgs], { stdio: 'pipe' });
+    return { child, usesPty: false };
+  }
+
   if (SCRIPT_PATH) {
     const command = [binaryPath, ...normalizedArgs].map(shellQuote).join(' ');
     const child = spawn(SCRIPT_PATH, ['-qfec', command, '/dev/null'], { stdio: 'pipe' });
     return { child, usesPty: true };
-  }
-
-  if (STDBUF_PATH) {
-    const child = spawn(STDBUF_PATH, ['-o0', '-e0', binaryPath, ...normalizedArgs], { stdio: 'pipe' });
-    return { child, usesPty: false };
   }
 
   const child = spawn(binaryPath, normalizedArgs, { stdio: 'pipe' });
@@ -64,6 +74,7 @@ function ensureCapacity() {
 
   for (const [sessionId, session] of sessions) {
     if (session.done) {
+      void finalizeSession(session, { cleanupBinary: true }).catch(() => {});
       sessions.delete(sessionId);
       return;
     }
@@ -73,7 +84,7 @@ function ensureCapacity() {
 }
 
 async function finalizeSession(session, options = {}) {
-  const { forceKill = false } = options;
+  const { forceKill = false, cleanupBinary = false } = options;
 
   if (forceKill && session.child && !session.done) {
     session.child.kill('SIGKILL');
@@ -84,8 +95,8 @@ async function finalizeSession(session, options = {}) {
     session.cleanupTimer = null;
   }
 
-  const binaryPath = session.binaryPath;
-  if (binaryPath) {
+  if (cleanupBinary && session.binaryPath) {
+    const binaryPath = session.binaryPath;
     await fs.remove(binaryPath).catch(() => {});
   }
 }
@@ -104,7 +115,7 @@ function scheduleSessionCleanup(sessionId) {
       return;
     }
 
-    await finalizeSession(stale).catch(() => {});
+    await finalizeSession(stale, { cleanupBinary: true }).catch(() => {});
     sessions.delete(sessionId);
   }, EXECUTION_LIMITS.sessionRetentionMs);
   session.cleanupTimer.unref?.();
@@ -150,6 +161,10 @@ export async function startRunSession(binaryPath, args = []) {
     timedOut: false,
     outputLimitHit: false,
     inputClosed: false,
+    stopRequested: false,
+    status: SESSION_STATUS.running,
+    completionReason: null,
+    exitSignal: null,
     usesPty,
     cleanupTimer: null,
     timeoutTimer: null,
@@ -162,6 +177,8 @@ export async function startRunSession(binaryPath, args = []) {
     }
     session.timeoutTimer = setTimeout(() => {
       session.timedOut = true;
+      session.status = SESSION_STATUS.timedOut;
+      session.completionReason = SESSION_STATUS.timedOut;
       child.kill('SIGKILL');
     }, EXECUTION_LIMITS.timeoutMs);
     session.timeoutTimer.unref?.();
@@ -178,6 +195,8 @@ export async function startRunSession(binaryPath, args = []) {
 
     if (!session.outputLimitHit && session.outputBytes > EXECUTION_LIMITS.outputBytes) {
       session.outputLimitHit = true;
+      session.status = SESSION_STATUS.outputLimited;
+      session.completionReason = SESSION_STATUS.outputLimited;
       child.kill('SIGKILL');
     }
   });
@@ -191,6 +210,8 @@ export async function startRunSession(binaryPath, args = []) {
 
     if (!session.outputLimitHit && session.outputBytes > EXECUTION_LIMITS.outputBytes) {
       session.outputLimitHit = true;
+      session.status = SESSION_STATUS.outputLimited;
+      session.completionReason = SESSION_STATUS.outputLimited;
       child.kill('SIGKILL');
     }
   });
@@ -199,6 +220,8 @@ export async function startRunSession(binaryPath, args = []) {
     session.done = true;
     session.executionTime = Date.now() - session.startTime;
     session.exitCode = 1;
+    session.status = SESSION_STATUS.failed;
+    session.completionReason = 'spawn_error';
     session.stderr = `${session.stderr}${session.stderr ? '\n' : ''}${err.message}`;
     if (session.timeoutTimer) {
       clearTimeout(session.timeoutTimer);
@@ -208,10 +231,13 @@ export async function startRunSession(binaryPath, args = []) {
     scheduleSessionCleanup(sessionId);
   });
 
-  child.on('close', async (code) => {
+  child.on('close', async (code, signal) => {
     session.done = true;
     session.executionTime = Date.now() - session.startTime;
-    session.exitCode = code ?? (session.timedOut ? 124 : session.outputLimitHit ? 122 : 1);
+    session.exitSignal = signal ?? null;
+    session.exitCode = code ?? (
+      session.timedOut ? 124 : session.outputLimitHit ? 122 : session.stopRequested ? 130 : 1
+    );
 
     if (session.timedOut && !session.stderr) {
       session.stderr = `Execution timed out after ${EXECUTION_LIMITS.timeoutMs}ms`;
@@ -219,6 +245,27 @@ export async function startRunSession(binaryPath, args = []) {
 
     if (session.outputLimitHit && !session.stderr) {
       session.stderr = `Execution output exceeded ${EXECUTION_LIMITS.outputBytes} bytes`;
+    }
+
+    if (session.stopRequested && !session.stderr) {
+      session.stderr = 'Execution interrupted by user';
+    }
+
+    if (session.timedOut) {
+      session.status = SESSION_STATUS.timedOut;
+      session.completionReason = SESSION_STATUS.timedOut;
+    } else if (session.outputLimitHit) {
+      session.status = SESSION_STATUS.outputLimited;
+      session.completionReason = SESSION_STATUS.outputLimited;
+    } else if (session.stopRequested) {
+      session.status = SESSION_STATUS.stopped;
+      session.completionReason = 'stopped';
+    } else if ((code ?? 1) === 0) {
+      session.status = SESSION_STATUS.completed;
+      session.completionReason = SESSION_STATUS.completed;
+    } else {
+      session.status = SESSION_STATUS.failed;
+      session.completionReason = 'non_zero_exit';
     }
 
     if (session.timeoutTimer) {
@@ -231,7 +278,18 @@ export async function startRunSession(binaryPath, args = []) {
 
   sessions.set(sessionId, session);
 
-  return { success: true, sessionId };
+  return {
+    success: true,
+    sessionId,
+    status: session.status,
+    done: session.done,
+    inputClosed: session.inputClosed,
+    timedOut: session.timedOut,
+    outputLimitHit: session.outputLimitHit,
+    stopRequested: session.stopRequested,
+    completionReason: session.completionReason,
+    exitSignal: session.exitSignal
+  };
 }
 
 export function pollRunSession(sessionId) {
@@ -246,12 +304,19 @@ export function pollRunSession(sessionId) {
   return {
     found: true,
     sessionId,
+    status: session.status,
     output: session.output,
     stdout: session.stdout,
     stderr: session.stderr,
     done: session.done,
     exitCode: session.exitCode,
-    executionTime: session.executionTime
+    executionTime: session.executionTime,
+    inputClosed: session.inputClosed,
+    timedOut: session.timedOut,
+    outputLimitHit: session.outputLimitHit,
+    stopRequested: session.stopRequested,
+    completionReason: session.completionReason,
+    exitSignal: session.exitSignal
   };
 }
 
@@ -314,7 +379,11 @@ export function closeRunInput(sessionId) {
     session.inputClosed = true;
     session.output += '^D\n';
     session.refreshTimeout?.();
-    return { success: true };
+    return {
+      success: true,
+      status: session.status,
+      inputClosed: session.inputClosed
+    };
   } catch (err) {
     return {
       success: false,
@@ -330,8 +399,17 @@ export function stopRunSession(sessionId) {
   }
 
   if (!session.done) {
+    session.stopRequested = true;
+    session.status = SESSION_STATUS.stopping;
+    session.completionReason = 'stopped';
     session.child.kill('SIGKILL');
   }
 
-  return { success: true };
+  return {
+    success: true,
+    status: session.status,
+    done: session.done,
+    stopRequested: session.stopRequested,
+    completionReason: session.completionReason
+  };
 }

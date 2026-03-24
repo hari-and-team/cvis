@@ -202,12 +202,19 @@ export function registerRoutes(app) {
     return res.json({
       success: true,
       sessionId: result.sessionId,
+      status: result.status,
       output: result.output,
       stdout: result.stdout,
       stderr: result.stderr,
       done: result.done,
       exitCode: result.exitCode,
-      executionTime: result.executionTime
+      executionTime: result.executionTime,
+      inputClosed: result.inputClosed,
+      timedOut: result.timedOut,
+      outputLimitHit: result.outputLimitHit,
+      stopRequested: result.stopRequested,
+      completionReason: result.completionReason,
+      exitSignal: result.exitSignal
     });
   });
 
@@ -254,7 +261,7 @@ export function registerRoutes(app) {
   });
 
   app.post('/api/trace', async (req, res) => {
-    const { code, breakpoints } = req.body;
+    const { code, breakpoints, input } = req.body;
     const codeError = validateCode(code);
 
     if (codeError) {
@@ -269,7 +276,7 @@ export function registerRoutes(app) {
     console.log(`Tracing code with ${breakpointResult.value.length} breakpoints...`);
 
     try {
-      const result = await traceExecution(code, breakpointResult.value);
+      const result = await traceExecution(code, breakpointResult.value, typeof input === 'string' ? input : '');
       console.log(`✓ Trace complete: ${result.totalSteps} steps`);
       return res.json(result);
     } catch (err) {

@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { Code2, Check, Copy, Loader2, Play } from 'lucide-svelte';
-  import { isRunning } from '$lib/stores';
+  import { Check, Code2, Loader2, Play } from 'lucide-svelte';
+  import { isCompiling, isRunning, lastBinaryPath } from '$lib/stores';
   import { createEventDispatcher } from 'svelte';
-
-  export let code: string = '';
 
   const dispatch = createEventDispatcher<{
     compile: void;
@@ -11,19 +9,11 @@
     loadTemplate: string;
   }>();
 
-  let copied = false;
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(code);
-      copied = true;
-      setTimeout(() => copied = false, 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
+  function handleCompile() {
+    dispatch('compile');
   }
 
-  function handleCompileRun() {
+  function handleRun() {
     dispatch('run');
   }
 </script>
@@ -42,30 +32,31 @@
   <div class="actions">
     <button
       class="btn btn-secondary"
-      class:copied
-      on:click={handleCopy}
+      class:loading={$isCompiling}
+      disabled={$isCompiling || $isRunning}
+      on:click={handleCompile}
     >
-      {#if copied}
-        <Check size={14} color="#98c379" />
-        <span>Copied!</span>
+      {#if $isCompiling}
+        <Loader2 size={14} class="animate-spin" />
+        <span>Compiling…</span>
       {:else}
-        <Copy size={14} />
-        <span>Copy</span>
+        <Check size={14} />
+        <span>Compile</span>
       {/if}
     </button>
 
     <button
       class="btn btn-primary"
       class:running={$isRunning}
-      disabled={$isRunning}
-      on:click={handleCompileRun}
+      disabled={$isCompiling || $isRunning || !$lastBinaryPath}
+      on:click={handleRun}
     >
       {#if $isRunning}
         <Loader2 size={14} class="animate-spin" />
         <span>Running…</span>
       {:else}
         <Play size={14} fill="#fff" />
-        <span>Compile & Run</span>
+        <span>Run</span>
       {/if}
     </button>
   </div>
@@ -165,29 +156,36 @@
     line-height: 1;
   }
 
-  /* Secondary Button */
   .btn-secondary {
-    background: var(--od-bg-main);
-    border: 1px solid var(--od-border);
-    color: var(--od-text);
+    background: linear-gradient(135deg, #61afef, #4b97d6);
+    color: #f7fbff;
+    box-shadow:
+      0 2px 8px rgba(97, 175, 239, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
   }
 
-  .btn-secondary:hover {
-    background: var(--od-bg-hover);
-    border-color: #4b5263;
-    color: var(--od-text-bright);
+  .btn-secondary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #74bbf4, #58a3e1);
+    box-shadow:
+      0 4px 12px rgba(97, 175, 239, 0.32),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    transform: translateY(-1px);
   }
 
-  .btn-secondary:active {
-    transform: translateY(1px);
+  .btn-secondary:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow:
+      0 1px 4px rgba(97, 175, 239, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
-  .btn-secondary.copied {
-    border-color: rgba(152, 195, 121, 0.4);
-    color: var(--od-green);
+  .btn-secondary.loading {
+    background: linear-gradient(135deg, #4b97d6, #3b7fb8);
+    cursor: not-allowed;
+    opacity: 0.9;
   }
 
-  /* Primary Button - Compile & Run */
+  /* Primary Button - Run */
   .btn-primary {
     background: linear-gradient(135deg, #98c379, #7eb35d);
     color: #1e2127;
@@ -220,6 +218,12 @@
 
   .btn-primary:disabled {
     cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .btn-secondary:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
   }
 
   /* Spin Animation */
