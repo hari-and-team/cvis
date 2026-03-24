@@ -99,6 +99,13 @@ else
   echo "✗ Trace failed"
   exit 1
 fi
+HAS_RUNTIME=$(echo "$TRACE_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); step=(body.get('steps') or [{}])[0]; runtime=step.get('runtime') or {}; ok=isinstance(runtime.get('globals'), dict) and isinstance(runtime.get('frames'), list) and isinstance(runtime.get('flatMemory'), dict); print(ok)")
+if [ "$HAS_RUNTIME" = "True" ]; then
+  echo "✓ Structured trace runtime snapshot present"
+else
+  echo "✗ Structured trace runtime snapshot missing"
+  exit 1
+fi
 echo ""
 
 # Test 6: Reject unsafe binary path

@@ -140,7 +140,12 @@ Response:
       "lineNo": 2,
       "registers": { "pc": 2, "sp": 4032, "fp": 4096 },
       "memory": {},
-      "stackFrames": [{ "name": "main", "locals": {} }],
+      "stackFrames": [{ "name": "global", "locals": {} }, { "name": "main", "locals": {} }],
+      "runtime": {
+        "globals": {},
+        "frames": [{ "name": "main", "locals": {} }],
+        "flatMemory": {}
+      },
       "instructionPointer": "line:2",
       "timestamp": 1710000000001
     }
@@ -153,6 +158,8 @@ Response:
 Notes:
 - Tracing is provided by `lib/c-interpreter.js`.
 - `breakpoints` are optional and filter returned trace steps to matching line numbers.
+- `steps[].runtime` is the preferred structured trace snapshot with separate `globals`, `frames`, and flattened `flatMemory`.
+- `memory` and `stackFrames` are still returned for compatibility with older consumers.
 
 ## Configuration
 

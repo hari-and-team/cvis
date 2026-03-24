@@ -9,6 +9,7 @@ import {
   stopRunSession
 } from '../lib/run-session.js';
 import { traceExecution } from '../lib/c-interpreter.js';
+import { analyzeProgramIntent } from '../lib/program-intent-ml.js';
 import {
   getErrorMessage,
   getLanguageLabel,
@@ -73,6 +74,19 @@ function traceServerErrorResponse(message) {
     errors: [message],
     steps: [],
     totalSteps: 0
+  };
+}
+
+function analyzeValidationResponse(message) {
+  return {
+    success: false,
+    error: 'Invalid analyze request',
+    primaryIntent: 'generic',
+    primaryLabel: 'Generic Algorithm',
+    confidence: 0.35,
+    matchedSignals: [],
+    engine: 'validation-error',
+    errors: [message]
   };
 }
 
@@ -188,12 +202,19 @@ export function registerRoutes(app) {
     return res.json({
       success: true,
       sessionId: result.sessionId,
+      status: result.status,
       output: result.output,
       stdout: result.stdout,
       stderr: result.stderr,
       done: result.done,
       exitCode: result.exitCode,
-      executionTime: result.executionTime
+      executionTime: result.executionTime,
+      inputClosed: result.inputClosed,
+      timedOut: result.timedOut,
+      outputLimitHit: result.outputLimitHit,
+      stopRequested: result.stopRequested,
+      completionReason: result.completionReason,
+      exitSignal: result.exitSignal
     });
   });
 
@@ -240,7 +261,7 @@ export function registerRoutes(app) {
   });
 
   app.post('/api/trace', async (req, res) => {
-    const { code, breakpoints } = req.body;
+    const { code, breakpoints, input } = req.body;
     const codeError = validateCode(code);
 
     if (codeError) {
@@ -255,12 +276,37 @@ export function registerRoutes(app) {
     console.log(`Tracing code with ${breakpointResult.value.length} breakpoints...`);
 
     try {
-      const result = await traceExecution(code, breakpointResult.value);
+      const result = await traceExecution(code, breakpointResult.value, typeof input === 'string' ? input : '');
       console.log(`✓ Trace complete: ${result.totalSteps} steps`);
       return res.json(result);
     } catch (err) {
       console.error('Trace error:', err);
       return res.status(500).json(traceServerErrorResponse(getErrorMessage(err)));
+    }
+  });
+
+  app.post('/api/analyze/intent', async (req, res) => {
+    const { code } = req.body;
+    const codeError = validateCode(code);
+
+    if (codeError) {
+      return res.status(400).json(analyzeValidationResponse(codeError));
+    }
+
+    try {
+      const result = await analyzeProgramIntent(code);
+      return res.json(result);
+    } catch (err) {
+      console.error('Intent analysis error:', err);
+      return res.status(500).json({
+        success: false,
+        error: getErrorMessage(err),
+        primaryIntent: 'generic',
+        primaryLabel: 'Generic Algorithm',
+        confidence: 0.35,
+        matchedSignals: [],
+        engine: 'server-error'
+      });
     }
   });
 }

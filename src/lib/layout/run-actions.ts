@@ -11,6 +11,7 @@ import {
   currentStepIndex,
   errorMessage,
   isCompiling,
+  isPlaying,
   isRunning,
   lastBinaryPath,
   lastCompileResult,
@@ -28,6 +29,7 @@ interface CompileRunActionParams {
 interface TraceActionParams {
   code: string;
   breakpoints?: number[];
+  input?: string;
 }
 
 interface TraceActionResult {
@@ -38,9 +40,41 @@ function getErrorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-function getInitialTraceStepIndex(steps: Array<{ stackFrames?: unknown[] }>): number {
-  const index = steps.findIndex((step) => Array.isArray(step.stackFrames) && step.stackFrames.length > 0);
-  return index >= 0 ? index : 0;
+type TraceStepFrameCarrier = {
+  runtime?: {
+    frames?: Array<{ name?: unknown }>;
+  };
+  stackFrames?: Array<{ name?: unknown }>;
+};
+
+function getTraceStepFrames(step: TraceStepFrameCarrier): Array<{ name?: unknown }> {
+  if (Array.isArray(step.runtime?.frames)) {
+    return step.runtime.frames;
+  }
+
+  if (Array.isArray(step.stackFrames)) {
+    return step.stackFrames;
+  }
+
+  return [];
+}
+
+function hasNonGlobalFrame(step: TraceStepFrameCarrier): boolean {
+  return getTraceStepFrames(step).some((frame) => {
+    if (!frame || typeof frame !== 'object') return false;
+    const name = typeof frame.name === 'string' ? frame.name.trim().toLowerCase() : '';
+    return name !== '' && name !== 'global';
+  });
+}
+
+function getInitialTraceStepIndex(steps: TraceStepFrameCarrier[]): number {
+  const firstExecutableFrame = steps.findIndex((step) => hasNonGlobalFrame(step));
+  if (firstExecutableFrame >= 0) {
+    return firstExecutableFrame;
+  }
+
+  const firstWithFrames = steps.findIndex((step) => getTraceStepFrames(step).length > 0);
+  return firstWithFrames >= 0 ? firstWithFrames : 0;
 }
 
 const RUN_POLL_INTERVAL_MS = 120;
@@ -54,51 +88,92 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-export async function runCompileAndRunAction({
-  code
-}: CompileRunActionParams): Promise<void> {
-  let startedSessionId: string | null = null;
+async function stopActiveRuntimeSession(): Promise<void> {
+  if (!activeRunSessionId) {
+    runSessionId.set(null);
+    return;
+  }
 
+  const sessionId = activeRunSessionId;
+  activeRunSessionId = null;
+  activeRunInputClosed = false;
+  activeRunOutputCursor = '';
+  runSessionId.set(null);
+  await stopRunSession(sessionId).catch(() => {});
+}
+
+function resetRuntimeOutputState(): void {
+  lastExecutionResult.set(null);
+  runSessionId.set(null);
+  runConsoleTranscript.set('');
+  activeRunOutputCursor = '';
+  activeRunInputClosed = false;
+}
+
+export async function runCompileAction({
+  code
+}: CompileRunActionParams): Promise<boolean> {
   try {
     const validationError = validateCompileRequest(code);
     if (validationError) {
       errorMessage.set(validationError);
-      return;
+      lastCompileResult.set(null);
+      lastBinaryPath.set(null);
+      return false;
     }
 
-    if (activeRunSessionId) {
-      await stopRunSession(activeRunSessionId).catch(() => {});
-      activeRunSessionId = null;
-      runSessionId.set(null);
-    }
+    await stopActiveRuntimeSession();
 
-    isRunning.set(true);
     errorMessage.set(null);
-    lastExecutionResult.set(null);
+    isRunning.set(false);
+    resetRuntimeOutputState();
+    lastCompileResult.set(null);
     lastBinaryPath.set(null);
-    runSessionId.set(null);
-    runConsoleTranscript.set('');
-    activeRunOutputCursor = '';
-    activeRunInputClosed = false;
 
     isCompiling.set(true);
     const compileResult = await compileCode({ code });
     lastCompileResult.set(compileResult);
-    isCompiling.set(false);
 
     if (!compileResult.success) {
       errorMessage.set(compileResult.errors.join('\n'));
-      return;
+      return false;
     }
 
     if (!compileResult.binary) {
       errorMessage.set('Compilation succeeded, but no executable binary was returned.');
-      return;
+      return false;
     }
 
     lastBinaryPath.set(compileResult.binary);
+    return true;
+  } catch (err) {
+    const message = getErrorMessage(err, 'An error occurred during compilation');
+    errorMessage.set(message);
+    lastCompileResult.set(null);
+    lastBinaryPath.set(null);
+    console.error('Compile error:', err);
+    return false;
+  } finally {
+    isCompiling.set(false);
+  }
+}
+
+export async function runBinaryAction(binaryPath: string | null): Promise<void> {
+  let startedSessionId: string | null = null;
+
+  try {
+    if (!binaryPath) {
+      errorMessage.set('Compile successfully before running the program.');
+      return;
+    }
+
+    await stopActiveRuntimeSession();
+
+    isRunning.set(true);
+    errorMessage.set(null);
+    resetRuntimeOutputState();
     const runStart = await startRunSession({
-      binaryPath: compileResult.binary,
+      binaryPath,
       args: []
     });
     if (!runStart.sessionId) {
@@ -140,10 +215,10 @@ export async function runCompileAndRunAction({
 
       if (poll.done) {
         activeRunSessionId = null;
-        activeRunInputClosed = false;
+        activeRunInputClosed = Boolean(poll.inputClosed);
         activeRunOutputCursor = '';
         runSessionId.set(null);
-        if ((poll.exitCode ?? 1) !== 0 && poll.stderr) {
+        if (poll.completionReason !== 'stopped' && (poll.exitCode ?? 1) !== 0 && poll.stderr) {
           errorMessage.set(poll.stderr);
         }
         break;
@@ -154,7 +229,7 @@ export async function runCompileAndRunAction({
   } catch (err) {
     const message = getErrorMessage(err, 'An error occurred');
     errorMessage.set(message);
-    console.error('Compile/Run error:', err);
+    console.error('Run error:', err);
 
     if (startedSessionId) {
       await stopRunSession(startedSessionId).catch(() => {});
@@ -167,7 +242,6 @@ export async function runCompileAndRunAction({
     }
   } finally {
     isRunning.set(false);
-    isCompiling.set(false);
   }
 }
 
@@ -212,6 +286,19 @@ export async function interruptRuntimeSession(): Promise<void> {
   activeRunInputClosed = false;
   activeRunOutputCursor = '';
   runSessionId.set(null);
+  lastExecutionResult.update((current) =>
+    current
+      ? {
+          ...current,
+          exitCode: 130
+        }
+      : {
+          stdout: '',
+          stderr: '',
+          exitCode: 130,
+          executionTime: 0
+        }
+  );
   runConsoleTranscript.update((prev) => `${prev}^C\n`);
 
   await stopRunSession(sessionId).catch(() => {});
@@ -219,11 +306,13 @@ export async function interruptRuntimeSession(): Promise<void> {
 
 export async function runTraceAction({
   code,
-  breakpoints = []
+  breakpoints = [],
+  input
 }: TraceActionParams): Promise<TraceActionResult> {
   try {
     const validationError = validateTraceRequest(code);
     if (validationError) {
+      isPlaying.set(false);
       errorMessage.set(validationError);
       traceSteps.set([]);
       currentStepIndex.set(0);
@@ -231,10 +320,14 @@ export async function runTraceAction({
     }
 
     errorMessage.set(null);
+    isPlaying.set(false);
+    traceSteps.set([]);
+    currentStepIndex.set(0);
 
     const result = await traceCode({
       code,
-      breakpoints
+      breakpoints,
+      input
     });
 
     if (result.success) {
@@ -244,6 +337,7 @@ export async function runTraceAction({
     }
 
     const traceErr = result.errors.join('\n') || 'Trace failed';
+    isPlaying.set(false);
     traceSteps.set([]);
     currentStepIndex.set(0);
     errorMessage.set(traceErr);
@@ -251,6 +345,7 @@ export async function runTraceAction({
   } catch (err) {
     const message = getErrorMessage(err, 'An error occurred during tracing');
     console.error('Trace error:', err);
+    isPlaying.set(false);
     traceSteps.set([]);
     currentStepIndex.set(0);
     errorMessage.set(message);

@@ -1,21 +1,27 @@
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, Cpu, FileText, Loader2, SkipBack, SkipForward, Play, Pause } from 'lucide-svelte';
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { Cpu, FileText, Loader2 } from 'lucide-svelte';
+  import { createEventDispatcher } from 'svelte';
   import highlight from '$lib/highlight';
-  import { currentStepIndex, editorCode, isPlaying, traceSteps } from '$lib/stores';
+  import { currentStepIndex, editorCode, traceSteps } from '$lib/stores';
+
+  const LINE_HEIGHT_PX = 22;
+  const EDITOR_PADDING_PX = 12;
+  const AUTO_SCROLL_MARGIN_LINES = 3;
 
   const dispatch = createEventDispatcher<{
     trace: void;
   }>();
 
+  export let isTracing = false;
+
   let code = $editorCode;
-  let isTracing = false;
   let hlLine: number | null = null;
   let lineCount = 1;
   let taRef: HTMLTextAreaElement;
   let preRef: HTMLPreElement;
   let lnRef: HTMLDivElement;
-  let playing = false;
+  let scrollTop = 0;
+  let lastAutoScrolledStep = -1;
 
   $: {
     code = $editorCode;
@@ -24,7 +30,11 @@
 
   $: total = $traceSteps.length;
   $: curStep = $currentStepIndex;
-  $: playing = $isPlaying;
+  $: isTraceMode = total > 0;
+  $: activeTraceStep = isTraceMode ? $traceSteps[curStep] ?? null : null;
+  $: currentLineTop = hlLine
+    ? (hlLine - 1) * LINE_HEIGHT_PX + EDITOR_PADDING_PX - scrollTop
+    : null;
 
   $: {
     if ($traceSteps && $traceSteps.length > 0 && $traceSteps[$currentStepIndex]) {
@@ -34,15 +44,53 @@
     }
   }
 
+  $: {
+    if (!isTraceMode) {
+      lastAutoScrolledStep = -1;
+    } else if (taRef && hlLine !== null && curStep !== lastAutoScrolledStep) {
+      // Keep the active trace line visible, but only when step changes so
+      // manual scrolling during a paused step is not overridden repeatedly.
+      ensureHighlightedLineVisible(hlLine);
+      lastAutoScrolledStep = curStep;
+    }
+  }
+
   function syncScroll() {
     if (taRef && preRef && lnRef) {
+      scrollTop = taRef.scrollTop;
       preRef.scrollTop = taRef.scrollTop;
       preRef.scrollLeft = taRef.scrollLeft;
       lnRef.scrollTop = taRef.scrollTop;
     }
   }
 
+  function ensureHighlightedLineVisible(lineNo: number) {
+    if (!taRef) return;
+
+    const lineTop = EDITOR_PADDING_PX + (lineNo - 1) * LINE_HEIGHT_PX;
+    const lineBottom = lineTop + LINE_HEIGHT_PX;
+    const viewportTop = taRef.scrollTop;
+    const viewportBottom = viewportTop + taRef.clientHeight;
+    const margin = AUTO_SCROLL_MARGIN_LINES * LINE_HEIGHT_PX;
+
+    const shouldScrollUp = lineTop < viewportTop + margin;
+    const shouldScrollDown = lineBottom > viewportBottom - margin;
+    if (!shouldScrollUp && !shouldScrollDown) return;
+
+    const centeredTop = Math.max(
+      0,
+      lineTop - taRef.clientHeight / 2 + LINE_HEIGHT_PX / 2
+    );
+
+    taRef.scrollTop = centeredTop;
+    syncScroll();
+  }
+
   function onKey(e: KeyboardEvent) {
+    if (isTraceMode) {
+      return;
+    }
+
     if (e.key === 'Tab') {
       e.preventDefault();
       const start = taRef.selectionStart;
@@ -56,55 +104,19 @@
   }
 
   function handleCodeChange() {
+    if (isTraceMode) {
+      code = $editorCode;
+      return;
+    }
+
     $editorCode = code;
     traceSteps.set([]);
   }
 
   async function runTrace() {
-    isTracing = true;
+    if (isTracing) return;
     dispatch('trace');
-    setTimeout(() => {
-      isTracing = false;
-    }, 500);
   }
-
-  function setCurStep(val: number | ((prev: number) => number)) {
-    if (typeof val === 'function') {
-      currentStepIndex.update(val);
-    } else {
-      currentStepIndex.set(val);
-    }
-  }
-
-  function setPlaying(val: boolean | ((prev: boolean) => boolean)) {
-    if (typeof val === 'function') {
-      isPlaying.update(val);
-    } else {
-      isPlaying.set(val);
-    }
-  }
-
-  let playInterval: number | undefined;
-
-  $: {
-    if (playing && total > 0) {
-      if (playInterval) clearInterval(playInterval);
-      playInterval = window.setInterval(() => {
-        if ($currentStepIndex < total - 1) {
-          currentStepIndex.update((i) => i + 1);
-        } else {
-          isPlaying.set(false);
-        }
-      }, 800);
-    } else if (playInterval) {
-      clearInterval(playInterval);
-      playInterval = undefined;
-    }
-  }
-
-  onMount(() => () => {
-    if (playInterval) clearInterval(playInterval);
-  });
 </script>
 
 <div class="editor-pane">
@@ -133,7 +145,7 @@
       {#if hlLine}
         <div
           class="current-line-highlight"
-          style="top: {(hlLine - 1) * 22 + 12}px;"
+          style="top: {currentLineTop ?? 0}px;"
         ></div>
       {/if}
       <pre
@@ -148,6 +160,8 @@
         on:scroll={syncScroll}
         spellcheck={false}
         class="code-input"
+        class:readonly-mode={isTraceMode}
+        readonly={isTraceMode}
       ></textarea>
     </div>
   </div>
@@ -165,89 +179,19 @@
         <span>Interpreting…</span>
       {:else}
         <Cpu size={14} />
-        <span>Trace Execution</span>
+        <span>{isTraceMode ? 'Retrace Execution' : 'Trace Execution'}</span>
       {/if}
     </button>
 
-    {#if $traceSteps && $traceSteps.length > 0}
-      <div class="playback-controls">
-        <button
-          on:click={() => { setCurStep(0); setPlaying(false); }}
-          class="ctrl-btn icon-only"
-          title="Go to start"
-        >
-          <SkipBack size={12} />
-        </button>
-        <button
-          on:click={() => setCurStep((p) => Math.max(0, p - 1))}
-          disabled={curStep === 0}
-          class="ctrl-btn flex-1"
-        >
-          <ChevronLeft size={14} />
-          <span>Prev</span>
-        </button>
-        <button
-          on:click={() => setPlaying((p) => !p)}
-          class="ctrl-btn flex-1 play-btn"
-          class:playing={playing}
-        >
-          {#if playing}
-            <Pause size={12} />
-            <span>Pause</span>
-          {:else}
-            <Play size={12} />
-            <span>Play</span>
-          {/if}
-        </button>
-        <button
-          on:click={() => setCurStep((p) => Math.min(total - 1, p + 1))}
-          disabled={curStep === total - 1}
-          class="ctrl-btn flex-1"
-        >
-          <span>Next</span>
-          <ChevronRight size={14} />
-        </button>
-        <button
-          on:click={() => { setCurStep(total - 1); setPlaying(false); }}
-          class="ctrl-btn icon-only"
-          title="Go to end"
-        >
-          <SkipForward size={12} />
-        </button>
-      </div>
-
-      <!-- Progress Slider -->
-      <div class="progress-container">
-        <div
-          role="slider"
-          tabindex="0"
-          aria-valuenow={curStep + 1}
-          aria-valuemin={1}
-          aria-valuemax={total}
-          on:click={(e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            const x = e instanceof MouseEvent ? e.clientX : 0;
-            setCurStep(Math.min(total - 1, Math.floor(((x - r.left) / r.width) * total)));
-            setPlaying(false);
-          }}
-          on:keydown={(e) => {
-            if (e.key === 'ArrowRight') setCurStep((p) => Math.min(total - 1, p + 1));
-            else if (e.key === 'ArrowLeft') setCurStep((p) => Math.max(0, p - 1));
-          }}
-          class="progress-track"
-        >
-          <div
-            class="progress-fill"
-            style="width: {((curStep + 1) / total) * 100}%;"
-          ></div>
-          <div
-            class="progress-thumb"
-            style="left: {((curStep + 1) / total) * 100}%;"
-          ></div>
+    {#if isTraceMode}
+      <div class="trace-status">
+        <div class="trace-status-copy">
+          <span class="trace-status-label">Trace is active in the Visualizer panel</span>
+          <span class="trace-status-meta">
+            line {activeTraceStep?.lineNo ?? '—'} · step {curStep + 1} / {total}
+          </span>
         </div>
-        <span class="step-counter">
-          {curStep + 1} / {total}
-        </span>
+        <span class="trace-status-chip">Right panel controls</span>
       </div>
     {/if}
   </div>
@@ -403,6 +347,10 @@
     outline: none;
   }
 
+  .code-input.readonly-mode {
+    caret-color: transparent;
+  }
+
   /* Controls Panel */
   .controls-panel {
     background: #21252b;
@@ -447,123 +395,46 @@
     cursor: not-allowed;
   }
 
-  /* Playback Controls */
-  .playback-controls {
-    display: flex;
-    gap: 6px;
-  }
-
-  /* Control Buttons */
-  .ctrl-btn {
+  .trace-status {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 8px 12px;
-    background: #2c313a;
-    border: 1px solid #3e4451;
-    border-radius: 5px;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    border: 1px solid rgba(97, 175, 239, 0.2);
+    background: rgba(97, 175, 239, 0.08);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+
+  .trace-status-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .trace-status-label {
+    color: #e5e5e5;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .trace-status-meta {
     color: #abb2bf;
     font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  }
-
-  .ctrl-btn:hover:not(:disabled) {
-    background: #3e4451;
-    border-color: #5c6370;
-    color: #e5e5e5;
-  }
-
-  .ctrl-btn:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-
-  .ctrl-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .ctrl-btn.icon-only {
-    padding: 8px 10px;
-  }
-
-  .ctrl-btn.flex-1 {
-    flex: 1;
-  }
-
-  .ctrl-btn.play-btn {
-    background: #2c313a;
-  }
-
-  .ctrl-btn.play-btn.playing {
-    background: rgba(198, 120, 221, 0.15);
-    border-color: #c678dd;
-    color: #c678dd;
-  }
-
-  .ctrl-btn.play-btn:hover:not(:disabled) {
-    background: rgba(97, 175, 239, 0.15);
-    border-color: #61afef;
-    color: #61afef;
-  }
-
-  /* Progress Slider */
-  .progress-container {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .progress-track {
-    flex: 1;
-    height: 6px;
-    background: #3e4451;
-    border-radius: 3px;
-    cursor: pointer;
-    position: relative;
-    overflow: visible;
-  }
-
-  .progress-track:focus {
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(97, 175, 239, 0.3);
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #61afef, #56b6c2);
-    border-radius: 3px;
-    transition: width 0.15s ease;
-  }
-
-  .progress-thumb {
-    position: absolute;
-    top: 50%;
-    width: 14px;
-    height: 14px;
-    background: #e5e5e5;
-    border: 2px solid #61afef;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    transition: left 0.15s ease, transform 0.1s ease;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-  }
-
-  .progress-track:hover .progress-thumb {
-    transform: translate(-50%, -50%) scale(1.1);
-  }
-
-  .step-counter {
-    color: #5c6370;
-    font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
+  }
+
+  .trace-status-chip {
+    color: #61afef;
+    border: 1px solid rgba(97, 175, 239, 0.28);
+    background: rgba(97, 175, 239, 0.12);
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 10px;
+    font-weight: 700;
     white-space: nowrap;
-    min-width: 50px;
-    text-align: right;
   }
 
   /* Animation for loader */
