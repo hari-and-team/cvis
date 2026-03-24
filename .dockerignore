@@ -1,62 +1,33 @@
-# Dependencies
 node_modules/
+server/node_modules/
 npm-debug.log
 yarn-error.log
 
-# Build artifacts
 dist/
 build/
 .svelte-kit/
 .output/
+coverage/
+.nyc_output/
 
-# Environment files
 .env
 .env.local
 .env.*.local
 
-# IDE
+.git/
+.gitignore
+.gitattributes
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# OS files
 .DS_Store
 Thumbs.db
 
-# Git
-.git/
-.gitignore
-.gitattributes
-
-# Testing
-coverage/
-.nyc_output/
-
-# Logs
 logs/
 *.log
-
-# Temporary files
 tmp/
 temp/
 *.tmp
-
-# Documentation (not needed in container)
-*.md
-!README.md
-
-# Config files that aren't needed
-.eslintrc*
-.prettierrc*
-tsconfig.json
-tailwind.config.js
-postcss.config.js
-vite.config.ts
-svelte.config.js
-
-# Frontend source (backend only)
-src/
-public/
-index.html

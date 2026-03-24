@@ -1,28 +1,21 @@
-# Use official GCC image as base
-FROM gcc:13
+FROM gcc:13-bookworm
 
-# Install Node.js (LTS version)
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates coreutils util-linux && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR /app
+WORKDIR /app/server
 
-# Copy package files first for better caching
-COPY package*.json ./
+COPY server/package*.json ./
+RUN npm ci --omit=dev
 
-# Install dependencies
-RUN npm install --production
+COPY server/ ./
 
-# Copy server code
-COPY server/ ./server/
-
-# Expose backend port
 EXPOSE 3001
 
-# Set environment variable to indicate we're in Docker
 ENV DOCKER_ENV=true
+ENV NODE_ENV=development
 
-# Start Express server
-CMD ["node", "server/index.js"]
+CMD ["npm", "start"]

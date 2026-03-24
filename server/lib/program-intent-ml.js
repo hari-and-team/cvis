@@ -70,7 +70,7 @@ const PROFILES = [
   },
   {
     intent: 'tree',
-    keywords: ['tree', 'bst', 'avl', 'inorder', 'preorder', 'postorder', 'left', 'right'],
+    keywords: ['tree', 'bst', 'avl', 'inorder', 'preorder', 'postorder', 'root', 'leaf'],
     patterns: [
       {
         regex: /\bstruct\s+\w+\s*\{[\s\S]*\*\s*left\s*;[\s\S]*\*\s*right\s*;/,
@@ -254,6 +254,36 @@ function scoreIntent(source, profile) {
   return Math.max(0, score - conflictPenalty(source, profile.intent));
 }
 
+function candidateConfidence(score, topScore) {
+  if (topScore <= 0) return 0.35;
+  return clamp(0.35 + (score / topScore) * 0.58, 0.35, 0.95);
+}
+
+function buildSummary(best, confidence, matchedSignals, nextCandidate) {
+  const leadingSignal = matchedSignals[0] ?? 'general code structure';
+  const confidenceLabel =
+    confidence >= 0.8 ? 'high confidence' : confidence >= 0.6 ? 'moderate confidence' : 'early confidence';
+  const nextLabel = nextCandidate ? ` Secondary signal: ${nextCandidate.label}.` : '';
+
+  return `${best.label} detected with ${confidenceLabel}, led by ${leadingSignal}.${nextLabel}`;
+}
+
+function buildExplanation(best, matchedSignals, nextCandidate) {
+  const explanation = [];
+
+  if (matchedSignals.length > 0) {
+    explanation.push(`Key signals: ${matchedSignals.slice(0, 4).join(', ')}`);
+  }
+
+  explanation.push(`The classifier sees the strongest match as ${best.label.toLowerCase()}.`);
+
+  if (nextCandidate) {
+    explanation.push(`A weaker competing match was ${nextCandidate.label.toLowerCase()}.`);
+  }
+
+  return explanation;
+}
+
 export async function analyzeProgramIntent(code) {
   const source = stripCommentsAndStrings(code);
   const candidates = [];
@@ -276,7 +306,17 @@ export async function analyzeProgramIntent(code) {
       primaryIntent: 'generic',
       primaryLabel: LABELS.generic,
       confidence: 0.35,
-      matchedSignals: []
+      matchedSignals: [],
+      candidates: [
+        {
+          intent: 'generic',
+          label: LABELS.generic,
+          score: 1,
+          confidence: 0.35
+        }
+      ],
+      summary: 'No strong algorithm fingerprint was detected yet.',
+      explanation: ['Add more structure, function names, or data-structure cues for a stronger match.']
     };
   }
 
@@ -294,6 +334,12 @@ export async function analyzeProgramIntent(code) {
 
   const profile = PROFILES.find((entry) => entry.intent === best.intent);
   const matchedSignals = profile ? collectSignals(source, profile) : [];
+  const topCandidates = candidates.slice(0, 3).map((candidate) => ({
+    intent: candidate.intent,
+    label: candidate.label,
+    score: candidate.score,
+    confidence: candidateConfidence(candidate.score, topScore)
+  }));
 
   return {
     success: true,
@@ -301,6 +347,9 @@ export async function analyzeProgramIntent(code) {
     primaryIntent: best.intent,
     primaryLabel: best.label,
     confidence,
-    matchedSignals
+    matchedSignals,
+    candidates: topCandidates,
+    summary: buildSummary(best, confidence, matchedSignals, second),
+    explanation: buildExplanation(best, matchedSignals, second)
   };
 }

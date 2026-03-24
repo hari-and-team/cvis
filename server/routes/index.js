@@ -85,6 +85,9 @@ function analyzeValidationResponse(message) {
     primaryLabel: 'Generic Algorithm',
     confidence: 0.35,
     matchedSignals: [],
+    candidates: [],
+    summary: 'The analyzer needs code before it can classify the program shape.',
+    explanation: [message],
     engine: 'validation-error',
     errors: [message]
   };
@@ -305,6 +308,9 @@ export function registerRoutes(app) {
         primaryLabel: 'Generic Algorithm',
         confidence: 0.35,
         matchedSignals: [],
+        candidates: [],
+        summary: 'The analyzer hit a server error before it could classify the code.',
+        explanation: [],
         engine: 'server-error'
       });
     }

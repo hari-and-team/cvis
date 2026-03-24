@@ -16,6 +16,7 @@ import {
   lastBinaryPath,
   lastCompileResult,
   lastExecutionResult,
+  lastRunInputTranscript,
   runConsoleTranscript,
   runSessionId,
   traceSteps
@@ -106,6 +107,7 @@ function resetRuntimeOutputState(): void {
   lastExecutionResult.set(null);
   runSessionId.set(null);
   runConsoleTranscript.set('');
+  lastRunInputTranscript.set('');
   activeRunOutputCursor = '';
   activeRunInputClosed = false;
 }
@@ -260,6 +262,7 @@ export async function sendRuntimeInputLine(line: string): Promise<void> {
     sessionId,
     input: payload
   });
+  lastRunInputTranscript.update((current) => `${current}${payload}`);
 }
 
 export async function sendRuntimeEof(): Promise<void> {

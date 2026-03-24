@@ -33,7 +33,7 @@ async function startServer() {
     console.error('Please install GCC:');
     console.error('  - Ubuntu/Debian: sudo apt-get install gcc');
     console.error('  - macOS: xcode-select --install');
-    console.error('  - Windows: Install MinGW or WSL');
+    console.error('  - Windows: Use Docker Desktop with `docker compose up --build`');
     process.exit(1);
   }
 

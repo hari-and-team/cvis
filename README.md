@@ -25,8 +25,8 @@ For a module-by-module map of the codebase, see `CODEBASE.md`.
 ## Development Setup
 
 ### Prerequisites
-- Node.js 18+ (for SvelteKit and Express backend)
-- **Option 1 (Recommended):** Docker & Docker Compose
+- **Option 1 (Recommended):** Docker Desktop / Docker Engine with Compose v2
+- Node.js 18+ (only needed for local non-Docker development)
 - **Option 2:** Local GCC installation
 
 ### Installation
@@ -47,38 +47,48 @@ For a module-by-module map of the codebase, see `CODEBASE.md`.
 
 ## Running the Application
 
-### Option 1: Docker Mode (Recommended for Production & Consistent Behavior)
+### Option 1: Docker Mode (Recommended for Windows and Cross-Platform Consistency)
 
 **Benefits:**
 - ✅ No need to install GCC locally
 - ✅ Consistent GCC version across all environments
 - ✅ Self-contained shipping
-- ✅ Works identically on Linux, macOS, and Windows
+- ✅ Frontend and backend both run in containers
+- ✅ Works well with Docker Desktop on Windows
 
 **Usage:**
 
 ```bash
-# Build the Docker container (first time only)
+# Build the containers
 npm run docker:build
-# OR: docker-compose build
+# OR: docker compose build
 
-# Start the backend in Docker
-npm run docker:up
-# OR: docker-compose up
+# Start the full stack
+npm run docker:up:build
+# OR: docker compose up --build
 
-# In a separate terminal, start the frontend
-npm run dev
-
-# Stop the backend
+# Stop the stack
 npm run docker:down
-# OR: docker-compose down
+# OR: docker compose down
 ```
 
 **What happens:**
-- Backend runs in a Docker container on port 3001
-- GCC is available inside the container (gcc:13 from official Docker image)
-- Node.js + Express backend handles compilation requests
-- Volume mounts allow hot-reload during development
+- Frontend runs in Docker on `http://localhost:5173`
+- Backend runs in Docker on `http://localhost:3001`
+- GCC, `stdbuf`, and `script` are available inside the backend container
+- Vite proxies `/api` to the backend service inside Docker
+- File watching uses polling so code changes are picked up reliably on Windows-mounted volumes
+
+**Windows quick start:**
+
+```bash
+# 1. Install Docker Desktop and start it
+# 2. From the repo root:
+npm run docker:up:build
+
+# 3. Open:
+http://localhost:5173
+```
 
 ---
 
@@ -88,7 +98,7 @@ npm run docker:down
 - GCC must be installed on your system
   - **Ubuntu/Debian:** `sudo apt-get install gcc`
   - **macOS:** `xcode-select --install`
-  - **Windows:** Install MinGW or use WSL
+  - **Windows:** Docker Desktop is recommended instead of host GCC
 
 **Usage:**
 
@@ -233,7 +243,7 @@ Health check endpoint.
 ```json
 {
   "status": "ok",
-  "gcc": "/usr/local/bin/gcc",
+  "gcc": "/usr/bin/gcc",
   "environment": "docker",
   "timestamp": "2024-03-18T10:00:00.000Z"
 }
@@ -260,25 +270,26 @@ npm run check
 The backend automatically detects whether it's running in Docker or locally:
 
 - **Docker mode:** `DOCKER_ENV=true` environment variable is set
-  - GCC path: `/usr/local/bin/gcc` (from gcc:13 official image)
+  - GCC path: first available of `/usr/bin/gcc`, `/usr/local/bin/gcc`, `/bin/gcc`, or `gcc`
   - Listens on `0.0.0.0:3001` for external access
 
 - **Local mode:** No `DOCKER_ENV` variable
-  - GCC path: `/usr/bin/gcc` (Linux) or `gcc` (in PATH)
+  - GCC path: first available system `gcc`
   - Listens on `localhost:3001`
 
-### Docker Image
+### Docker Services
 
-- **Base:** `gcc:13` (official GCC image with Debian)
-- **Node.js:** Installed via NodeSource (v20 LTS)
-- **Size:** ~1.5 GB (includes full GCC toolchain)
-- **Build time:** ~2-3 minutes (first time)
+- **Frontend:** `Dockerfile.frontend` using Node 20
+- **Backend:** `server/Dockerfile` using `gcc:13-bookworm` + Node 20
+- **Compose:** `docker-compose.yml` starts both services together for development
 
 ### Volume Mounts
 
 For development, the following are mounted:
-- `./server:/app/server` - Hot reload server code changes
-- `backend_node_modules` - Isolated node_modules volume
+- `./:/app` - Frontend source for live reload inside the frontend container
+- `frontend_node_modules` - Isolated frontend dependencies
+- `./server:/app/server` - Hot reload backend code changes
+- `backend_node_modules` - Isolated backend dependencies
 
 ---
 
@@ -286,7 +297,7 @@ For development, the following are mounted:
 
 ### Test compilation (Docker)
 ```bash
-docker-compose up -d
+docker compose up -d backend
 curl -X POST http://localhost:3001/api/compile \
   -H "Content-Type: application/json" \
   -d '{"code":"#include <stdio.h>\nint main() { printf(\"Hello\\n\"); return 0; }"}'
@@ -311,7 +322,7 @@ curl http://localhost:3001/health
 
 ### Docker not starting
 - Ensure Docker is running: `docker ps`
-- Check logs: `docker-compose logs`
+- Check logs: `docker compose logs`
 - Rebuild: `npm run docker:build`
 
 ### GCC not found (local mode)
@@ -324,7 +335,7 @@ curl http://localhost:3001/health
 
 ### Backend not responding
 - Check if backend is running: `curl http://localhost:3001/health`
-- Check logs: `docker-compose logs backend` (Docker) or check terminal (local)
+- Check logs: `docker compose logs backend` (Docker) or check terminal (local)
 
 ---
 

@@ -158,6 +158,7 @@
         on:input={handleCodeChange}
         on:keydown={onKey}
         on:scroll={syncScroll}
+        wrap="off"
         spellcheck={false}
         class="code-input"
         class:readonly-mode={isTraceMode}
@@ -311,9 +312,6 @@
     inset: 0;
     margin: 0;
     padding: 12px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    line-height: 22px;
     color: #abb2bf;
     pointer-events: none;
     overflow: hidden;
@@ -329,18 +327,31 @@
     height: 100%;
     padding: 12px;
     margin: 0;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    line-height: 22px;
     background: transparent;
     color: transparent;
+    -webkit-text-fill-color: transparent;
     caret-color: #e5e5e5;
     resize: none;
     outline: none;
     overflow: auto;
     z-index: 3;
     border: none;
+  }
+
+  .code-display,
+  .code-input {
+    box-sizing: border-box;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 22px;
+    letter-spacing: normal;
+    white-space: pre;
+    overflow-wrap: normal;
+    word-break: normal;
     tab-size: 2;
+    -moz-tab-size: 2;
+    font-variant-ligatures: none;
+    font-kerning: none;
   }
 
   .code-input:focus {

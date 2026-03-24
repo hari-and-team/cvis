@@ -1,20 +1,41 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { createEventDispatcher, onDestroy } from 'svelte';
-  import { AlertTriangle, Cpu, Loader2, Code2, Keyboard, Play } from 'lucide-svelte';
-  import Visualizer from './Visualizer.svelte';
-  import type { TraceStep } from '$lib/types';
   import {
+    AlertTriangle,
+    ArrowRight,
+    CheckCircle2,
+    Circle,
+    Code2,
+    Cpu,
+    Lightbulb,
+    Loader2,
+    Play,
+    Target
+  } from 'lucide-svelte';
+  import Visualizer from './Visualizer.svelte';
+  import type { AnalyzeIntentResult, TraceStep } from '$lib/types';
+  import {
+    activeMilestoneIndex,
     editorCode,
     errorMessage,
     lastCompileResult,
     lastExecutionResult,
+    lastRunInputTranscript,
+    milestoneProgress,
+    mentorSelectionMode,
     rightPaneTab,
     runConsoleTranscript,
     runSessionId,
-    traceInputDraft
+    selectedPracticeProblemId,
+    userProfile
   } from '$lib/stores';
+  import { analyzeProgramIntent as requestIntentAnalysis } from '$lib/api';
   import { predictProgramIntent } from '$lib/visualizer/program-intent';
-  import { analyzeCodeType } from '$lib/analysis/code-type-finder';
+  import {
+    analyzeCodeType,
+    type PracticeRecommendation
+  } from '$lib/analysis/code-type-finder';
   import {
     interruptRuntimeSession,
     sendRuntimeEof,
@@ -27,7 +48,6 @@
   export let currentStep: number = 0;
   export let isTracing = false;
   export let traceErr: string | null = null;
-  export let traceNeedsInput = false;
   const TRACE_LOADING_TICK_MS = 850;
   const dispatch = createEventDispatcher<{
     trace: void;
@@ -63,6 +83,17 @@
     signals: string[];
   }
 
+  interface MentorHintCard {
+    title: string;
+    body: string;
+  }
+
+  interface ScoredMentorRecommendation {
+    recommendation: PracticeRecommendation;
+    score: number;
+    notes: string[];
+  }
+
   let terminalInputBuffer = '';
   let terminalSending = false;
   let pendingInputLines: string[] = [];
@@ -70,13 +101,18 @@
   let outputRef: HTMLDivElement;
   let prevRenderedOutput = '';
   let prevSessionId: string | null = null;
+  let prevMentorProblemId: string | null = null;
+  let aiIntentResult: AnalyzeIntentResult | null = null;
+  let aiIntentLoading = false;
+  let aiIntentError: string | null = null;
+  let aiIntentTimer: number | null = null;
+  let aiIntentRequestId = 0;
   let loadingStepIndex = 0;
   let loadingTicker: number | null = null;
 
   $: canSendToStdin = Boolean($runSessionId);
-  $: requiresTraceInput = /\bscanf\s*\(/.test($editorCode);
-  $: traceInputReady = $traceInputDraft.trim().length > 0;
-  $: showTraceInputNotice = traceNeedsInput && requiresTraceInput && !traceInputReady;
+  $: traceUsesRuntimeInput = /\bscanf\s*\(/.test($editorCode);
+  $: hasCapturedRunInput = $lastRunInputTranscript.length > 0;
   $: intentPrediction = predictProgramIntent($editorCode);
   $: analysisReport = analyzeCodeType($editorCode);
   $: programLineCount = Math.max($editorCode.split('\n').length, 1);
@@ -87,8 +123,84 @@
   $: hasDetectedAlgorithms = detectedAlgorithmCards.length > 0;
   $: dominantAnalysisSection = pickDominantSection();
   $: recommendedProblems = analysisReport.recommendations.slice(0, 4);
+  $: personalizedMentorQueue = buildPersonalizedMentorQueue(recommendedProblems);
+  $: guidedMentorSelection = personalizedMentorQueue[0] ?? null;
+  $: if (recommendedProblems.length === 0 && $selectedPracticeProblemId !== null) {
+    selectedPracticeProblemId.set(null);
+    activeMilestoneIndex.set(0);
+  } else if (
+    $mentorSelectionMode === 'manual' &&
+    recommendedProblems.length > 0 &&
+    !recommendedProblems.some((recommendation) => recommendation.id === $selectedPracticeProblemId)
+  ) {
+    const fallbackRecommendation = guidedMentorSelection?.recommendation ?? recommendedProblems[0];
+    selectedPracticeProblemId.set(fallbackRecommendation.id);
+    activeMilestoneIndex.set(firstIncompleteMilestoneIndex(fallbackRecommendation));
+  }
+  $: selectedMentorProblem =
+    $mentorSelectionMode === 'guided'
+      ? guidedMentorSelection?.recommendation ?? null
+      : recommendedProblems.find((recommendation) => recommendation.id === $selectedPracticeProblemId) ??
+        guidedMentorSelection?.recommendation ??
+        null;
+  $: selectedMentorSummary =
+    personalizedMentorQueue.find((entry) => entry.recommendation.id === selectedMentorProblem?.id) ?? null;
+  $: mentorSelectionSummary =
+    $mentorSelectionMode === 'guided'
+      ? selectedMentorSummary?.notes.join(' ') || 'AI is choosing the next practice problem for you.'
+      : 'Manual mode keeps the currently selected problem pinned until you change it.';
+  $: mentorCompletedCount = countCompletedMilestones(selectedMentorProblem);
+  $: mentorTotalCount = selectedMentorProblem?.milestones.length ?? 0;
+  $: mentorCompletionPercent =
+    mentorTotalCount > 0 ? Math.round((mentorCompletedCount / mentorTotalCount) * 100) : 0;
+  $: if (selectedMentorProblem?.id !== prevMentorProblemId) {
+    prevMentorProblemId = selectedMentorProblem?.id ?? null;
+    if (selectedMentorProblem) {
+      activeMilestoneIndex.set(firstIncompleteMilestoneIndex(selectedMentorProblem));
+    } else {
+      activeMilestoneIndex.set(0);
+    }
+  }
+  $: mentorCurrentMilestoneIndex = getCurrentMilestoneIndex(selectedMentorProblem);
+  $: mentorCurrentMilestone =
+    selectedMentorProblem?.milestones[mentorCurrentMilestoneIndex] ?? null;
+  $: mentorHintCards = buildMentorHintCards(selectedMentorProblem, mentorCurrentMilestone);
   $: primaryTechniqueLabels = intentPrediction.techniques.slice(0, 4).map(formatDsaLabel);
   $: loadingSteps = getLoadingSteps(intentPrediction.primaryLabel);
+  $: if (browser) {
+    const source = $editorCode.trim();
+    aiIntentRequestId += 1;
+    const requestId = aiIntentRequestId;
+
+    if (aiIntentTimer !== null) {
+      clearTimeout(aiIntentTimer);
+      aiIntentTimer = null;
+    }
+
+    if (source.length < 12) {
+      aiIntentResult = null;
+      aiIntentError = null;
+      aiIntentLoading = false;
+    } else {
+      aiIntentLoading = true;
+      aiIntentTimer = window.setTimeout(async () => {
+        try {
+          const result = await requestIntentAnalysis({ code: $editorCode });
+          if (requestId !== aiIntentRequestId) return;
+          aiIntentResult = result;
+          aiIntentError = result.success ? null : result.error ?? 'AI analysis failed';
+        } catch (err) {
+          if (requestId !== aiIntentRequestId) return;
+          aiIntentResult = null;
+          aiIntentError = err instanceof Error ? err.message : 'AI analysis failed';
+        } finally {
+          if (requestId === aiIntentRequestId) {
+            aiIntentLoading = false;
+          }
+        }
+      }, 320);
+    }
+  }
   // Runtime transcript takes priority so users always see the latest terminal state.
   $: output = $runConsoleTranscript
     ? $runConsoleTranscript
@@ -98,6 +210,17 @@
       ? $lastCompileResult.output || $lastCompileResult.errors.join('\n')
       : '';
   $: renderedOutput = `${output}${canSendToStdin ? terminalInputBuffer : ''}`;
+  $: traceConsoleOutput = renderedOutput || output;
+  $: capturedRunInputLineCount = $lastRunInputTranscript.length === 0
+    ? 0
+    : $lastRunInputTranscript.split('\n').filter((line, index, lines) => line.length > 0 || index < lines.length - 1).length;
+  $: traceConsoleStatus = traceUsesRuntimeInput
+    ? hasCapturedRunInput
+      ? 'stdin replay ready'
+      : 'run first'
+    : traceConsoleOutput
+      ? 'latest console output'
+      : 'optional';
 
   $: hasError = Boolean($lastExecutionResult?.stderr || $lastCompileResult?.errors?.length);
   $: clampedTraceStepIndex =
@@ -142,6 +265,9 @@
   onDestroy(() => {
     if (loadingTicker !== null) {
       clearInterval(loadingTicker);
+    }
+    if (aiIntentTimer !== null) {
+      clearTimeout(aiIntentTimer);
     }
   });
 
@@ -549,6 +675,187 @@
     return 'difficulty-easy';
   }
 
+  function overallMentorCompletionCount(): number {
+    return Object.values($milestoneProgress).filter(Boolean).length;
+  }
+
+  function buildPersonalizedMentorQueue(
+    recommendations: PracticeRecommendation[]
+  ): ScoredMentorRecommendation[] {
+    const completedAcrossQueue = overallMentorCompletionCount();
+
+    return recommendations
+      .map((recommendation, recommendationIndex) => {
+        const completed = countCompletedMilestones(recommendation);
+        const total = recommendation.milestones.length;
+        const incomplete = Math.max(total - completed, 0);
+        let score = Math.max(0, 40 - recommendationIndex * 6);
+        const notes: string[] = [];
+
+        if (completed > 0 && incomplete > 0) {
+          score += 18;
+          notes.push('You already started this plan, so continuing it keeps momentum.');
+        } else if (incomplete > 0) {
+          score += 8;
+        } else if (total > 0) {
+          score -= 12;
+          notes.push('This one is already complete, so it is deprioritized for now.');
+        }
+
+        if (recommendationIndex === 0) {
+          score += 6;
+          notes.push('It matches the strongest current analysis signal.');
+        }
+
+        if (completedAcrossQueue === 0) {
+          if (recommendation.difficulty === 'Easy') {
+            score += 8;
+            notes.push('Starting with an easier warm-up should reduce friction.');
+          } else if (recommendation.difficulty === 'Medium') {
+            score += 3;
+          } else {
+            score -= 5;
+          }
+        } else if (completedAcrossQueue >= 3) {
+          if (recommendation.difficulty === 'Medium') score += 4;
+          if (recommendation.difficulty === 'Hard') score += 2;
+        }
+
+        if (analysisReport.confidence < 0.55 && recommendation.difficulty === 'Hard') {
+          score -= 3;
+          notes.push('The current code signal is still fuzzy, so a hard jump is delayed.');
+        }
+
+        if (notes.length === 0) {
+          notes.push('This is the best next match based on your current code and milestone state.');
+        }
+
+        return {
+          recommendation,
+          score,
+          notes
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+  }
+
+  function milestoneKey(problemId: string, milestoneIndex: number): string {
+    return `${problemId}:${milestoneIndex}`;
+  }
+
+  function isMilestoneComplete(problemId: string, milestoneIndex: number): boolean {
+    return Boolean($milestoneProgress[milestoneKey(problemId, milestoneIndex)]);
+  }
+
+  function countCompletedMilestones(recommendation: PracticeRecommendation | null): number {
+    if (!recommendation) return 0;
+
+    return recommendation.milestones.reduce((count, _milestone, milestoneIndex) => {
+      return count + (isMilestoneComplete(recommendation.id, milestoneIndex) ? 1 : 0);
+    }, 0);
+  }
+
+  function firstIncompleteMilestoneIndex(recommendation: PracticeRecommendation): number {
+    const firstIncomplete = recommendation.milestones.findIndex(
+      (_milestone, milestoneIndex) => !isMilestoneComplete(recommendation.id, milestoneIndex)
+    );
+
+    return firstIncomplete >= 0 ? firstIncomplete : Math.max(recommendation.milestones.length - 1, 0);
+  }
+
+  function getCurrentMilestoneIndex(recommendation: PracticeRecommendation | null): number {
+    if (!recommendation || recommendation.milestones.length === 0) {
+      return 0;
+    }
+
+    const clampedIndex = Math.min(
+      Math.max($activeMilestoneIndex, 0),
+      recommendation.milestones.length - 1
+    );
+    if ($activeMilestoneIndex !== clampedIndex) {
+      activeMilestoneIndex.set(clampedIndex);
+    }
+    return clampedIndex;
+  }
+
+  function activateMentorPlan(recommendation: PracticeRecommendation) {
+    mentorSelectionMode.set('manual');
+    selectedPracticeProblemId.set(recommendation.id);
+    activeMilestoneIndex.set(firstIncompleteMilestoneIndex(recommendation));
+    rightPaneTab.set('mentor');
+  }
+
+  function activateGuidedMentorPlan() {
+    mentorSelectionMode.set('guided');
+    if (guidedMentorSelection?.recommendation) {
+      activeMilestoneIndex.set(firstIncompleteMilestoneIndex(guidedMentorSelection.recommendation));
+    }
+    rightPaneTab.set('mentor');
+  }
+
+  function activateManualMentorPlan(recommendation: PracticeRecommendation | null) {
+    if (!recommendation) return;
+    mentorSelectionMode.set('manual');
+    selectedPracticeProblemId.set(recommendation.id);
+    activeMilestoneIndex.set(firstIncompleteMilestoneIndex(recommendation));
+    rightPaneTab.set('mentor');
+  }
+
+  function focusMilestone(milestoneIndex: number) {
+    activeMilestoneIndex.set(milestoneIndex);
+  }
+
+  function toggleMentorMilestone(recommendation: PracticeRecommendation, milestoneIndex: number) {
+    const key = milestoneKey(recommendation.id, milestoneIndex);
+    const nextCompleted = !Boolean($milestoneProgress[key]);
+
+    milestoneProgress.update((current) => ({
+      ...current,
+      [key]: nextCompleted
+    }));
+
+    if (nextCompleted) {
+      const nextIncomplete = recommendation.milestones.findIndex(
+        (_milestone, nextIndex) =>
+          nextIndex > milestoneIndex && !Boolean($milestoneProgress[milestoneKey(recommendation.id, nextIndex)])
+      );
+      activeMilestoneIndex.set(nextIncomplete >= 0 ? nextIncomplete : milestoneIndex);
+      return;
+    }
+
+    activeMilestoneIndex.set(milestoneIndex);
+  }
+
+  function buildMentorHintCards(
+    recommendation: PracticeRecommendation | null,
+    milestone: string | null
+  ): MentorHintCard[] {
+    if (!recommendation || !milestone) {
+      return [];
+    }
+
+    const techniqueAnchor =
+      intentPrediction.techniques.slice(0, 4).map(formatDsaLabel)[0] ?? analysisReport.primaryLabel;
+    const sectionAnchor = dominantAnalysisSection
+      ? formatSectionTitle(dominantAnalysisSection.title)
+      : 'your next helper or loop';
+
+    return [
+      {
+        title: 'Tiny Hint',
+        body: `Turn this milestone into one concrete code edit inside ${sectionAnchor}: ${milestone}`
+      },
+      {
+        title: 'Guided Hint',
+        body: `Use ${techniqueAnchor} as the organizing idea. Write the invariant or state transition you expect before you code.`
+      },
+      {
+        title: 'Definition of Done',
+        body: `You are done with this checkpoint when you can explain why it works, name one edge case to test, and connect it back to ${recommendation.reason.toLowerCase()}`
+      }
+    ];
+  }
+
   function triggerTrace() {
     dispatch('trace');
   }
@@ -604,55 +911,53 @@
 
     {#if $rightPaneTab === 'visualizer'}
       <div class="visualizer-tab-shell">
-        {#if requiresTraceInput}
-          <section class="trace-input-card">
-            <div class="trace-input-header">
-              <div class="trace-input-title-row">
-                <span class="trace-input-icon"><Keyboard size={14} /></span>
-                <div class="trace-input-copy">
-                  <span class="trace-input-title">Trace stdin</span>
-                  <span class="trace-input-subtitle">
-                    `scanf()` needs preset input before trace playback can begin.
-                  </span>
-                </div>
+        {#if traceUsesRuntimeInput || traceConsoleOutput}
+          <section class="trace-runtime-card">
+            <div class="trace-runtime-header">
+              <div class="trace-runtime-copy">
+                <span class="trace-runtime-title">Runtime context</span>
+                <span class="trace-runtime-subtitle">
+                  {#if traceUsesRuntimeInput}
+                    {#if hasCapturedRunInput}
+                      Trace reuses the stdin you already entered in the Console for scanf().
+                    {:else}
+                      This program uses scanf(). Compile and run it once in the Console, then Trace will reuse that exact stdin.
+                    {/if}
+                  {:else}
+                    The latest compile or run transcript stays visible here while you inspect the trace.
+                  {/if}
+                </span>
               </div>
-              <span class:ready={traceInputReady} class="trace-input-status">
-                {traceInputReady ? 'Ready' : 'Needed'}
-              </span>
+              <div class="trace-runtime-actions">
+                <span class:ready={hasCapturedRunInput || !traceUsesRuntimeInput} class="trace-runtime-status">
+                  {traceConsoleStatus}
+                </span>
+                <button
+                  type="button"
+                  class="trace-runtime-run"
+                  disabled={isTracing || (traceUsesRuntimeInput && !hasCapturedRunInput)}
+                  on:click={triggerTrace}
+                >
+                  {#if isTracing}
+                    <Loader2 size={14} class="loader-spin" />
+                    <span>Tracing…</span>
+                  {:else}
+                    <Play size={13} />
+                    <span>{traceSteps.length > 0 ? 'Retrace' : 'Trace now'}</span>
+                  {/if}
+                </button>
+              </div>
             </div>
 
-            <textarea
-              class="trace-input-editor"
-              spellcheck={false}
-              value={$traceInputDraft}
-              on:input={(event) => traceInputDraft.set((event.currentTarget as HTMLTextAreaElement).value)}
-              placeholder="stdin for scanf()...&#10;Example: 1 10 3 4"
-            ></textarea>
-
-            <div class="trace-input-actions">
-              <span class="trace-input-note">
-                This matches the reference flow, but stays inside the TS/Svelte visualizer instead of using a popup.
-              </span>
-              <button
-                type="button"
-                class="trace-input-run"
-                disabled={isTracing || !traceInputReady}
-                on:click={triggerTrace}
-              >
-                {#if isTracing}
-                  <Loader2 size={14} class="loader-spin" />
-                  <span>Tracing…</span>
-                {:else}
-                  <Play size={13} />
-                  <span>Trace with Input</span>
-                {/if}
-              </button>
-            </div>
-
-            {#if showTraceInputNotice}
-              <div class="trace-input-warning">
-                Add the values above, then run Trace Execution again.
+            {#if hasCapturedRunInput}
+              <div class="trace-runtime-meta">
+                Replaying {capturedRunInputLineCount} stdin line{capturedRunInputLineCount === 1 ? '' : 's'}
+                from the latest run session.
               </div>
+            {/if}
+
+            {#if traceConsoleOutput}
+              <pre class="trace-runtime-output">{normalizeTerminalText(traceConsoleOutput)}</pre>
             {/if}
           </section>
         {/if}
@@ -695,8 +1000,8 @@
               <div class="viz-title">Ready to Visualize</div>
               <div class="viz-description">
                 Click <span class="highlight">Trace Execution</span> for a step-by-step visualization
-                {#if requiresTraceInput}
-                  with the stdin captured above.
+                {#if traceUsesRuntimeInput}
+                  after a Console run captures the stdin for scanf().
                 {/if}
               </div>
               <div class="feature-tags">
@@ -881,6 +1186,54 @@
             </section>
           {/if}
 
+          {#if aiIntentLoading || aiIntentResult || aiIntentError}
+            <section class="analysis-card">
+              <div class="analysis-header">
+                <span class="analysis-title">AI Code Identification</span>
+                <span class="analysis-meta">
+                  {#if aiIntentLoading}
+                    analyzing...
+                  {:else}
+                    {Math.round((aiIntentResult?.confidence ?? 0) * 100)}% confidence
+                  {/if}
+                </span>
+              </div>
+
+              {#if aiIntentLoading}
+                <div class="analysis-summary-hint analysis-summary-hint-block">
+                  Reading code text, extracting structural cues, and ranking likely problem types...
+                </div>
+              {:else if aiIntentError}
+                <div class="analysis-note">{aiIntentError}</div>
+              {:else if aiIntentResult}
+                <div class="analysis-primary-label">{aiIntentResult.primaryLabel}</div>
+                {#if aiIntentResult.summary}
+                  <div class="analysis-summary-text">{aiIntentResult.summary}</div>
+                {/if}
+                <div class="analysis-summary-hint">
+                  engine: {aiIntentResult.engine} · intent: {formatEvidenceLabel(aiIntentResult.primaryIntent)}
+                </div>
+                {#if aiIntentResult.explanation && aiIntentResult.explanation.length > 0}
+                  <div class="analysis-notes">
+                    {#each aiIntentResult.explanation as explanation}
+                      <div class="analysis-note">{explanation}</div>
+                    {/each}
+                  </div>
+                {/if}
+                {#if aiIntentResult.candidates && aiIntentResult.candidates.length > 0}
+                  <div class="analysis-evidence-label">Top matches</div>
+                  <div class="analysis-signal-row">
+                    {#each aiIntentResult.candidates as candidate}
+                      <span class="analysis-signal">
+                        {candidate.label} {Math.round(candidate.confidence * 100)}%
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
+              {/if}
+            </section>
+          {/if}
+
           {#if detectedSections.length > 0}
             <section class="analysis-card">
               <div class="analysis-header">
@@ -962,10 +1315,230 @@
                         {/each}
                       </div>
                     {/if}
+                    <div class="recommendation-actions">
+                      <button
+                        type="button"
+                        class="recommendation-action recommendation-action-secondary"
+                        on:click={activateGuidedMentorPlan}
+                      >
+                        AI pick for me
+                      </button>
+                      <button
+                        type="button"
+                        class="recommendation-action"
+                        on:click={() => activateMentorPlan(recommendation)}
+                      >
+                        Mentor plan
+                      </button>
+                    </div>
                   </article>
                 {/each}
               </div>
             </section>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    {#if $rightPaneTab === 'mentor'}
+      <div class="analysis-panel mentor-panel">
+        <div class="analysis-scroll">
+          {#if selectedMentorProblem}
+            <section class="analysis-card mentor-summary-card">
+              <div class="analysis-header">
+                <span class="analysis-title">AI Mentor</span>
+                <span class="analysis-meta">{mentorCompletionPercent}% complete</span>
+              </div>
+
+              <div class="mentor-mode-row">
+                <button
+                  type="button"
+                  class="mentor-mode-btn"
+                  class:mentor-mode-btn-active={$mentorSelectionMode === 'guided'}
+                  on:click={activateGuidedMentorPlan}
+                >
+                  AI-guided queue
+                </button>
+                <button
+                  type="button"
+                  class="mentor-mode-btn"
+                  class:mentor-mode-btn-active={$mentorSelectionMode === 'manual'}
+                  on:click={() => activateManualMentorPlan(selectedMentorProblem)}
+                >
+                  Manual choice
+                </button>
+              </div>
+
+              <div class="mentor-summary-top">
+                <div class="mentor-summary-copy">
+                  <div class="analysis-primary-label">{selectedMentorProblem.title}</div>
+                  <div class="recommendation-category">{selectedMentorProblem.category}</div>
+                  <div class="mentor-summary-text">{selectedMentorProblem.reason}</div>
+                  <div class="mentor-selection-summary">{mentorSelectionSummary}</div>
+                </div>
+                <span class="difficulty-pill {difficultyClass(selectedMentorProblem.difficulty)}">
+                  {selectedMentorProblem.difficulty}
+                </span>
+              </div>
+
+              <div class="mentor-progress-bar" aria-hidden="true">
+                <span style="width: {mentorCompletionPercent}%;"></span>
+              </div>
+
+              <div class="mentor-progress-meta">
+                <span>{mentorCompletedCount} of {mentorTotalCount} milestones checked</span>
+                <span>Current focus: step {mentorCurrentMilestoneIndex + 1}</span>
+              </div>
+
+              <div class="mentor-action-row">
+                <a
+                  href={selectedMentorProblem.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="recommendation-action recommendation-action-link"
+                >
+                  Open problem <ArrowRight size={12} />
+                </a>
+                <button
+                  type="button"
+                  class="recommendation-action"
+                  on:click={() => activeMilestoneIndex.set(firstIncompleteMilestoneIndex(selectedMentorProblem))}
+                >
+                  Jump to next incomplete
+                </button>
+              </div>
+            </section>
+
+            {#if $userProfile?.leetCode}
+              <section class="analysis-card">
+                <div class="analysis-header">
+                  <span class="analysis-title">LeetCode Integration</span>
+                  <span class="analysis-meta">@{$userProfile.leetCode.username}</span>
+                </div>
+                <div class="mentor-summary-text">
+                  Your account is linked, so mentor recommendations can flow straight into your LeetCode routine.
+                </div>
+                <div class="mentor-action-row">
+                  <a
+                    href={$userProfile.leetCode.profileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="recommendation-action recommendation-action-link"
+                  >
+                    Open LeetCode profile <ArrowRight size={12} />
+                  </a>
+                </div>
+              </section>
+            {/if}
+
+            <section class="analysis-card">
+              <div class="analysis-header">
+                <span class="analysis-title">Problem Queue</span>
+                <span class="analysis-meta">{recommendedProblems.length} picks</span>
+              </div>
+              <div class="mentor-problem-list">
+                {#each personalizedMentorQueue as entry}
+                  {@const recommendation = entry.recommendation}
+                  <button
+                    type="button"
+                    class="mentor-problem-item"
+                    class:mentor-problem-active={selectedMentorProblem.id === recommendation.id}
+                    on:click={() => activateManualMentorPlan(recommendation)}
+                  >
+                    <div class="mentor-problem-top">
+                      <span class="mentor-problem-title">{recommendation.title}</span>
+                      <span class="difficulty-pill {difficultyClass(recommendation.difficulty)}">
+                        {recommendation.difficulty}
+                      </span>
+                    </div>
+                    <div class="recommendation-category">{recommendation.category}</div>
+                    <div class="mentor-problem-reason">{recommendation.reason}</div>
+                    <div class="mentor-problem-hint">{entry.notes[0]}</div>
+                    {#if guidedMentorSelection?.recommendation.id === recommendation.id}
+                      <span class="mentor-focus-pill mentor-queue-pill">AI pick</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            </section>
+
+            <section class="analysis-card">
+              <div class="analysis-header">
+                <span class="analysis-title">Milestone Plan</span>
+                <span class="analysis-meta">{mentorTotalCount} checkpoints</span>
+              </div>
+              <div class="mentor-milestone-list">
+                {#each selectedMentorProblem.milestones as milestone, milestoneIndex}
+                  <article
+                    class="mentor-milestone-item"
+                    class:mentor-milestone-active={mentorCurrentMilestoneIndex === milestoneIndex}
+                  >
+                    <button
+                      type="button"
+                      class="mentor-milestone-toggle"
+                      aria-label={isMilestoneComplete(selectedMentorProblem.id, milestoneIndex) ? 'Mark milestone incomplete' : 'Mark milestone complete'}
+                      on:click={() => toggleMentorMilestone(selectedMentorProblem, milestoneIndex)}
+                    >
+                      {#if isMilestoneComplete(selectedMentorProblem.id, milestoneIndex)}
+                        <CheckCircle2 size={16} />
+                      {:else}
+                        <Circle size={16} />
+                      {/if}
+                    </button>
+
+                    <button
+                      type="button"
+                      class="mentor-milestone-copy"
+                      on:click={() => focusMilestone(milestoneIndex)}
+                    >
+                      <span class="mentor-milestone-step">Step {milestoneIndex + 1}</span>
+                      <span class="mentor-milestone-text">{milestone}</span>
+                    </button>
+
+                    {#if mentorCurrentMilestoneIndex === milestoneIndex}
+                      <span class="mentor-focus-pill">Focus</span>
+                    {/if}
+                  </article>
+                {/each}
+              </div>
+            </section>
+
+            <section class="analysis-card">
+              <div class="analysis-header">
+                <span class="analysis-title">Mentor Nudges</span>
+                <span class="analysis-meta">small, guided, deeper</span>
+              </div>
+
+              {#if mentorCurrentMilestone}
+                <div class="mentor-current-milestone">
+                  <Target size={14} />
+                  <span>{mentorCurrentMilestone}</span>
+                </div>
+              {/if}
+
+              <div class="mentor-hint-grid">
+                {#each mentorHintCards as hint}
+                  <article class="mentor-hint-card">
+                    <div class="mentor-hint-title">
+                      <Lightbulb size={13} />
+                      <span>{hint.title}</span>
+                    </div>
+                    <div class="mentor-hint-body">{hint.body}</div>
+                  </article>
+                {/each}
+              </div>
+            </section>
+          {:else}
+            <div class="empty-visualizer mentor-empty">
+              <div class="viz-icon-wrapper">
+                <Target size={48} class="viz-icon" />
+                <div class="viz-icon-pulse"></div>
+              </div>
+              <div class="viz-title">Mentor plan will appear here</div>
+              <div class="viz-description">
+                Analyze or trace code first so the mentor can turn the strongest recommendation into a guided checkpoint list.
+              </div>
+            </div>
           {/if}
         </div>
       </div>
@@ -1174,7 +1747,7 @@
     overflow: hidden;
   }
 
-  .trace-input-card {
+  .trace-runtime-card {
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -1188,52 +1761,42 @@
       );
   }
 
-  .trace-input-header {
+  .trace-runtime-header {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
   }
 
-  .trace-input-title-row {
-    display: flex;
-    gap: 10px;
-    align-items: flex-start;
-  }
-
-  .trace-input-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    color: var(--od-orange);
-    background: color-mix(in srgb, var(--od-orange) 14%, var(--od-bg-deep));
-    border: 1px solid color-mix(in srgb, var(--od-orange) 28%, transparent);
-    flex-shrink: 0;
-  }
-
-  .trace-input-copy {
+  .trace-runtime-copy {
     display: flex;
     flex-direction: column;
     gap: 3px;
+    min-width: 0;
   }
 
-  .trace-input-title {
+  .trace-runtime-title {
     color: var(--od-text-bright);
     font-size: 12px;
     font-weight: 700;
   }
 
-  .trace-input-subtitle,
-  .trace-input-note {
+  .trace-runtime-subtitle,
+  .trace-runtime-meta {
     color: var(--od-text-dim);
     font-size: 10px;
     line-height: 1.6;
   }
 
-  .trace-input-status {
+  .trace-runtime-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .trace-runtime-status {
     border-radius: 999px;
     border: 1px solid color-mix(in srgb, var(--od-orange) 28%, transparent);
     background: color-mix(in srgb, var(--od-orange) 12%, transparent);
@@ -1244,40 +1807,13 @@
     white-space: nowrap;
   }
 
-  .trace-input-status.ready {
+  .trace-runtime-status.ready {
     border-color: color-mix(in srgb, var(--od-green) 32%, transparent);
     background: color-mix(in srgb, var(--od-green) 12%, transparent);
     color: var(--od-green);
   }
 
-  .trace-input-editor {
-    width: 100%;
-    min-height: 78px;
-    resize: vertical;
-    border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--od-border) 80%, transparent);
-    background: color-mix(in srgb, var(--od-bg-deep) 94%, transparent);
-    color: var(--od-text-bright);
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 12px;
-    line-height: 1.6;
-    padding: 10px 12px;
-    outline: none;
-  }
-
-  .trace-input-editor:focus {
-    border-color: color-mix(in srgb, var(--od-blue) 48%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--od-blue) 32%, transparent);
-  }
-
-  .trace-input-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .trace-input-run {
+  .trace-runtime-run {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1294,24 +1830,30 @@
     white-space: nowrap;
   }
 
-  .trace-input-run:hover:not(:disabled) {
+  .trace-runtime-run:hover:not(:disabled) {
     border-color: color-mix(in srgb, var(--od-blue) 46%, transparent);
     background: color-mix(in srgb, var(--od-blue) 20%, var(--od-bg-deep));
   }
 
-  .trace-input-run:disabled {
+  .trace-runtime-run:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .trace-input-warning {
-    border-radius: 8px;
-    border: 1px solid color-mix(in srgb, var(--od-orange) 30%, transparent);
-    background: color-mix(in srgb, var(--od-orange) 10%, transparent);
-    color: var(--od-orange);
-    font-size: 10px;
-    font-weight: 600;
-    padding: 8px 10px;
+  .trace-runtime-output {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--od-border) 80%, transparent);
+    background: color-mix(in srgb, var(--od-bg-deep) 94%, transparent);
+    color: var(--od-text-bright);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 160px;
   }
 
   .loading-state {
@@ -1827,6 +2369,298 @@
     font-size: 10px;
     line-height: 1.5;
     margin-top: 6px;
+  }
+
+  .recommendation-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .recommendation-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--od-orange) 42%, transparent);
+    background: color-mix(in srgb, var(--od-orange) 12%, transparent);
+    color: var(--od-orange);
+    padding: 6px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .recommendation-action:hover {
+    background: color-mix(in srgb, var(--od-orange) 18%, transparent);
+  }
+
+  .recommendation-action-secondary {
+    color: var(--od-blue);
+    border-color: color-mix(in srgb, var(--od-blue) 40%, transparent);
+    background: color-mix(in srgb, var(--od-blue) 12%, transparent);
+  }
+
+  .recommendation-action-secondary:hover {
+    background: color-mix(in srgb, var(--od-blue) 18%, transparent);
+  }
+
+  .recommendation-action-link {
+    justify-content: center;
+  }
+
+  .mentor-mode-row {
+    display: inline-flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  .mentor-mode-btn {
+    border: 1px solid color-mix(in srgb, var(--od-border) 78%, transparent);
+    background: color-mix(in srgb, var(--od-bg-main) 78%, transparent);
+    color: var(--od-text);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .mentor-mode-btn-active {
+    border-color: color-mix(in srgb, var(--od-orange) 50%, transparent);
+    background: color-mix(in srgb, var(--od-orange) 12%, transparent);
+    color: var(--od-orange);
+  }
+
+  .mentor-summary-card {
+    background:
+      radial-gradient(circle at top right, color-mix(in srgb, var(--od-orange) 22%, transparent), transparent 46%),
+      color-mix(in srgb, var(--od-bg-main) 82%, transparent);
+  }
+
+  .mentor-summary-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .mentor-summary-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .mentor-summary-text {
+    color: var(--od-text);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  .mentor-selection-summary {
+    color: color-mix(in srgb, var(--od-blue) 80%, white 6%);
+    font-size: 10px;
+    line-height: 1.6;
+  }
+
+  .mentor-progress-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--od-border) 65%, transparent);
+    margin-top: 14px;
+    overflow: hidden;
+  }
+
+  .mentor-progress-bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--od-orange), color-mix(in srgb, var(--od-green) 72%, var(--od-orange)));
+  }
+
+  .mentor-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--od-text-dim);
+    font-size: 10px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  .mentor-action-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+
+  .mentor-problem-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .mentor-problem-item {
+    border: 1px solid color-mix(in srgb, var(--od-border) 75%, transparent);
+    background: color-mix(in srgb, var(--od-bg-main) 76%, transparent);
+    border-radius: 10px;
+    padding: 10px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .mentor-problem-active {
+    border-color: color-mix(in srgb, var(--od-orange) 58%, transparent);
+    background: color-mix(in srgb, var(--od-orange) 10%, transparent);
+  }
+
+  .mentor-problem-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .mentor-problem-title {
+    color: var(--od-text-bright);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .mentor-problem-reason {
+    color: var(--od-text);
+    font-size: 10px;
+    line-height: 1.5;
+    margin-top: 6px;
+  }
+
+  .mentor-problem-hint {
+    color: var(--od-text-dim);
+    font-size: 10px;
+    line-height: 1.5;
+    margin-top: 6px;
+  }
+
+  .mentor-queue-pill {
+    margin-top: 8px;
+    display: inline-flex;
+  }
+
+  .mentor-milestone-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .mentor-milestone-item {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: start;
+    border: 1px solid color-mix(in srgb, var(--od-border) 72%, transparent);
+    border-radius: 10px;
+    padding: 10px;
+    background: color-mix(in srgb, var(--od-bg-main) 78%, transparent);
+  }
+
+  .mentor-milestone-active {
+    border-color: color-mix(in srgb, var(--od-blue) 52%, transparent);
+    background: color-mix(in srgb, var(--od-blue) 8%, transparent);
+  }
+
+  .mentor-milestone-toggle {
+    border: none;
+    background: transparent;
+    color: var(--od-green);
+    cursor: pointer;
+    padding: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mentor-milestone-copy {
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .mentor-milestone-step {
+    color: var(--od-text-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .mentor-milestone-text {
+    color: var(--od-text-bright);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .mentor-focus-pill {
+    color: var(--od-blue);
+    border: 1px solid color-mix(in srgb, var(--od-blue) 32%, transparent);
+    background: color-mix(in srgb, var(--od-blue) 12%, transparent);
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 8px;
+  }
+
+  .mentor-current-milestone {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--od-text-bright);
+    border: 1px solid color-mix(in srgb, var(--od-orange) 30%, transparent);
+    background: color-mix(in srgb, var(--od-orange) 10%, transparent);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .mentor-hint-grid {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .mentor-hint-card {
+    border: 1px solid color-mix(in srgb, var(--od-border) 72%, transparent);
+    background: color-mix(in srgb, var(--od-bg-main) 76%, transparent);
+    border-radius: 10px;
+    padding: 10px;
+  }
+
+  .mentor-hint-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--od-orange);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .mentor-hint-body {
+    color: var(--od-text);
+    font-size: 11px;
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+
+  .mentor-empty {
+    min-height: 100%;
   }
 
   .difficulty-pill {

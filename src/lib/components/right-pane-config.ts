@@ -1,4 +1,4 @@
-import { Eye, ListTree, Terminal } from 'lucide-svelte';
+import { Bot, Eye, ListTree, Terminal } from 'lucide-svelte';
 
 // One Dark color palette for right pane
 export const OneDark = {
@@ -17,7 +17,7 @@ export const OneDark = {
   orange: '#d19a66',
 } as const;
 
-export type RightPaneTabId = 'console' | 'visualizer' | 'analysis';
+export type RightPaneTabId = 'console' | 'visualizer' | 'analysis' | 'mentor';
 
 export const RIGHT_PANE_TABS: Array<{
   id: RightPaneTabId;
@@ -27,7 +27,8 @@ export const RIGHT_PANE_TABS: Array<{
 }> = [
   { id: 'console', label: 'Console', Icon: Terminal, color: OneDark.green },
   { id: 'visualizer', label: 'Visualizer', Icon: Eye, color: OneDark.blue },
-  { id: 'analysis', label: 'Analysis', Icon: ListTree, color: OneDark.purple }
+  { id: 'analysis', label: 'Analysis', Icon: ListTree, color: OneDark.purple },
+  { id: 'mentor', label: 'Mentor', Icon: Bot, color: OneDark.orange }
 ];
 
 export const VISUALIZER_FEATURES = [

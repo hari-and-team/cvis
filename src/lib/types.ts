@@ -133,6 +133,13 @@ export interface AnalyzeIntentRequest {
   code: string;
 }
 
+export interface AnalyzeIntentCandidate {
+  intent: string;
+  label: string;
+  score: number;
+  confidence: number;
+}
+
 export interface AnalyzeIntentResult {
   success: boolean;
   engine: string;
@@ -140,6 +147,26 @@ export interface AnalyzeIntentResult {
   primaryLabel: string;
   confidence: number;
   matchedSignals: string[];
+  candidates?: AnalyzeIntentCandidate[];
+  summary?: string;
+  explanation?: string[];
+  error?: string;
+}
+
+export type UserRole = 'student' | 'mentor' | 'staff';
+
+export interface LinkedLeetCodeProfile {
+  username: string;
+  profileUrl: string;
+}
+
+export interface UserProfile {
+  displayName: string;
+  role: UserRole;
+  learningGoal: string;
+  leetCode: LinkedLeetCodeProfile | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ===== CODE ANALYSIS =====

@@ -4,21 +4,28 @@
   import { onDestroy, onMount } from 'svelte';
   import EditorPane from '$lib/components/EditorPane.svelte';
   import HeaderBar from '$lib/components/HeaderBar.svelte';
+  import OnboardingModal from '$lib/components/OnboardingModal.svelte';
   import RightPane from '$lib/components/RightPane.svelte';
   import { runBinaryAction, runCompileAction, runTraceAction } from '$lib/layout/run-actions';
   import {
     lastBinaryPath,
+    lastRunInputTranscript,
     rightPaneTab,
     editorCode,
     traceSteps,
     currentStepIndex,
-    traceInputDraft,
-    isPlaying
+    isPlaying,
+    mentorSelectionMode,
+    selectedPracticeProblemId,
+    activeMilestoneIndex,
+    milestoneProgress,
+    profileEditorOpen,
+    userProfile
   } from '$lib/stores';
+  import type { UserProfile } from '$lib/types';
 
   let isTracing = false;
   let traceErr: string | null = null;
-  let traceNeedsInput = false;
   let persistenceReady = false;
   let persistTimer: number | null = null;
   let lastEditorCodeSnapshot = '';
@@ -28,11 +35,15 @@
 
   const DRAFT_STORAGE_KEY = 'cvis:draft:v1';
   const DRAFT_BACKUP_STORAGE_KEY = 'cvis:draft:backup:v1';
+  const PROFILE_STORAGE_KEY = 'cvis:profile:v1';
 
   interface PersistedDraft {
     code: string;
-    rightPaneTab: 'console' | 'visualizer' | 'analysis';
-    traceInput: string;
+    rightPaneTab: 'console' | 'visualizer' | 'analysis' | 'mentor';
+    mentorSelectionMode: 'guided' | 'manual';
+    selectedPracticeProblemId: string | null;
+    activeMilestoneIndex: number;
+    milestoneProgress: Record<string, boolean>;
     savedAt: number;
   }
 
@@ -40,7 +51,10 @@
     return {
       code: $editorCode,
       rightPaneTab: $rightPaneTab,
-      traceInput: $traceInputDraft,
+      mentorSelectionMode: $mentorSelectionMode,
+      selectedPracticeProblemId: $selectedPracticeProblemId,
+      activeMilestoneIndex: $activeMilestoneIndex,
+      milestoneProgress: $milestoneProgress,
       savedAt
     };
   }
@@ -52,11 +66,82 @@
   function applyDraftToState(draft: PersistedDraft) {
     editorCode.set(draft.code);
     rightPaneTab.set(draft.rightPaneTab);
-    traceInputDraft.set(draft.traceInput);
+    mentorSelectionMode.set(draft.mentorSelectionMode);
+    selectedPracticeProblemId.set(draft.selectedPracticeProblemId);
+    activeMilestoneIndex.set(draft.activeMilestoneIndex);
+    milestoneProgress.set(draft.milestoneProgress);
+  }
+
+  function normalizeMilestoneProgress(value: unknown): Record<string, boolean> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(value).filter(([, entryValue]) => typeof entryValue === 'boolean')
+    );
   }
 
   function persistBackupDraft(draft: PersistedDraft) {
     localStorage.setItem(DRAFT_BACKUP_STORAGE_KEY, serializeDraft(draft));
+  }
+
+  function parseProfile(raw: string | null): UserProfile | null {
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<UserProfile>;
+      if (!parsed || typeof parsed !== 'object') return null;
+      if (typeof parsed.displayName !== 'string' || !parsed.displayName.trim()) return null;
+      if (!['student', 'mentor', 'staff'].includes(String(parsed.role))) return null;
+
+      const leetCode =
+        parsed.leetCode &&
+        typeof parsed.leetCode === 'object' &&
+        typeof parsed.leetCode.username === 'string' &&
+        typeof parsed.leetCode.profileUrl === 'string'
+          ? {
+              username: parsed.leetCode.username,
+              profileUrl: parsed.leetCode.profileUrl
+            }
+          : null;
+
+      return {
+        displayName: parsed.displayName.trim(),
+        role: parsed.role as UserProfile['role'],
+        learningGoal: typeof parsed.learningGoal === 'string' ? parsed.learningGoal : '',
+        leetCode,
+        createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : Date.now(),
+        updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now()
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function restoreProfileFromStorage() {
+    try {
+      const restored = parseProfile(localStorage.getItem(PROFILE_STORAGE_KEY));
+      userProfile.set(restored);
+      profileEditorOpen.set(false);
+    } catch (err) {
+      console.error('Failed to restore profile from local storage:', err);
+      userProfile.set(null);
+      profileEditorOpen.set(false);
+    }
+  }
+
+  function persistProfileToStorage(profile: UserProfile | null) {
+    try {
+      if (!profile) {
+        localStorage.removeItem(PROFILE_STORAGE_KEY);
+        return;
+      }
+
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    } catch (err) {
+      console.error('Failed to persist profile to local storage:', err);
+    }
   }
 
   function formatSavedAtLabel(timestamp: number): string {
@@ -77,12 +162,20 @@
       const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
       if (!parsed || typeof parsed !== 'object') return null;
       if (typeof parsed.code !== 'string') return null;
-      if (!['console', 'visualizer', 'analysis'].includes(String(parsed.rightPaneTab))) return null;
+      if (!['console', 'visualizer', 'analysis', 'mentor'].includes(String(parsed.rightPaneTab))) return null;
+      if (!['guided', 'manual'].includes(String(parsed.mentorSelectionMode ?? 'guided'))) return null;
 
       return {
         code: parsed.code,
         rightPaneTab: parsed.rightPaneTab as PersistedDraft['rightPaneTab'],
-        traceInput: typeof parsed.traceInput === 'string' ? parsed.traceInput : '',
+        mentorSelectionMode: parsed.mentorSelectionMode as PersistedDraft['mentorSelectionMode'] ?? 'guided',
+        selectedPracticeProblemId:
+          typeof parsed.selectedPracticeProblemId === 'string' ? parsed.selectedPracticeProblemId : null,
+        activeMilestoneIndex:
+          typeof parsed.activeMilestoneIndex === 'number' && parsed.activeMilestoneIndex >= 0
+            ? Math.floor(parsed.activeMilestoneIndex)
+            : 0,
+        milestoneProgress: normalizeMilestoneProgress(parsed.milestoneProgress),
         savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now()
       };
     } catch {
@@ -189,6 +282,7 @@
   }
 
   onMount(() => {
+    restoreProfileFromStorage();
     restoreDraftFromStorage();
     lastEditorCodeSnapshot = $editorCode;
     persistenceReady = true;
@@ -208,17 +302,25 @@
   });
 
   $: if (browser && persistenceReady) {
+    $userProfile;
+    persistProfileToStorage($userProfile);
+  }
+
+  $: if (browser && persistenceReady) {
     $editorCode;
     $rightPaneTab;
-    $traceInputDraft;
+    $mentorSelectionMode;
+    $selectedPracticeProblemId;
+    $activeMilestoneIndex;
+    $milestoneProgress;
     scheduleDraftPersist();
   }
 
   $: if (browser && persistenceReady && $editorCode !== lastEditorCodeSnapshot) {
     lastEditorCodeSnapshot = $editorCode;
     lastBinaryPath.set(null);
+    lastRunInputTranscript.set('');
     traceErr = null;
-    traceNeedsInput = false;
   }
 
   function resetTraceUiState() {
@@ -226,7 +328,6 @@
     currentStepIndex.set(0);
     isPlaying.set(false);
     traceErr = null;
-    traceNeedsInput = false;
   }
 
   async function handleCompile() {
@@ -253,15 +354,14 @@
     if (!browser) return;
 
     traceErr = null;
-    traceNeedsInput = false;
     isPlaying.set(false);
     rightPaneTab.set('visualizer');
 
-    const requiresTraceInput = /\bscanf\s*\(/.test($editorCode);
-    const traceInput = $traceInputDraft;
+    const requiresRuntimeReplay = /\bscanf\s*\(/.test($editorCode);
+    const traceInput = $lastRunInputTranscript;
 
-    if (requiresTraceInput && traceInput.trim() === '') {
-      traceNeedsInput = true;
+    if (requiresRuntimeReplay && traceInput.length === 0) {
+      traceErr = 'Run the program once in the Console and enter stdin there before tracing scanf()-based code.';
       traceSteps.set([]);
       currentStepIndex.set(0);
       return;
@@ -279,10 +379,31 @@
       isTracing = false;
     }
   }
+
+  function handleProfileSave(event: CustomEvent<{ profile: UserProfile }>) {
+    userProfile.set(event.detail.profile);
+    profileEditorOpen.set(false);
+  }
+
+  function handleProfileCancel() {
+    if (!$userProfile) {
+      return;
+    }
+
+    profileEditorOpen.set(false);
+  }
 </script>
 
 <div class="app">
-  <HeaderBar on:compile={handleCompile} on:run={handleRun} />
+  <HeaderBar
+    on:compile={handleCompile}
+    on:run={handleRun}
+    on:editProfile={() => {
+      if ($userProfile) {
+        profileEditorOpen.set(true);
+      }
+    }}
+  />
   {#if competingDraft}
     <div class="draft-conflict-banner" role="status" aria-live="polite">
       <div class="draft-conflict-copy">
@@ -310,11 +431,17 @@
       currentStep={$currentStepIndex}
       {isTracing}
       {traceErr}
-      {traceNeedsInput}
     />
   </div>
   <slot />
 </div>
+
+<OnboardingModal
+  open={$profileEditorOpen && Boolean($userProfile)}
+  existingProfile={$userProfile}
+  on:save={handleProfileSave}
+  on:cancel={handleProfileCancel}
+/>
 
 <style>
   .app {

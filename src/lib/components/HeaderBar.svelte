@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { Check, Code2, Loader2, Play } from 'lucide-svelte';
-  import { isCompiling, isRunning, lastBinaryPath } from '$lib/stores';
+  import { Check, Code2, ExternalLink, Loader2, Play, UserRound } from 'lucide-svelte';
+  import { isCompiling, isRunning, lastBinaryPath, userProfile } from '$lib/stores';
   import { createEventDispatcher } from 'svelte';
 
   const dispatch = createEventDispatcher<{
     compile: void;
     run: void;
     loadTemplate: string;
+    editProfile: void;
   }>();
 
   function handleCompile() {
@@ -15,6 +16,10 @@
 
   function handleRun() {
     dispatch('run');
+  }
+
+  function handleEditProfile() {
+    dispatch('editProfile');
   }
 </script>
 
@@ -30,6 +35,42 @@
   </div>
 
   <div class="actions">
+    <div class="profile-chip-shell">
+      {#if $userProfile}
+        <button class="profile-chip" on:click={handleEditProfile}>
+          <span class="profile-chip-icon"><UserRound size={14} /></span>
+          <span class="profile-chip-copy">
+            <span class="profile-chip-name">{$userProfile.displayName}</span>
+            <span class="profile-chip-meta">
+              {$userProfile.role}
+              {#if $userProfile.leetCode}
+                · LeetCode {$userProfile.leetCode.username}
+              {/if}
+            </span>
+          </span>
+        </button>
+      {:else}
+        <div class="profile-chip profile-chip-static">
+          <span class="profile-chip-icon"><UserRound size={14} /></span>
+          <span class="profile-chip-copy">
+            <span class="profile-chip-name">Local workspace</span>
+            <span class="profile-chip-meta">Account creation disabled for now</span>
+          </span>
+        </div>
+      {/if}
+      {#if $userProfile?.leetCode}
+        <a
+          href={$userProfile.leetCode.profileUrl}
+          target="_blank"
+          rel="noreferrer"
+          class="profile-chip-link"
+          title="Open LeetCode profile"
+        >
+          <ExternalLink size={13} />
+        </a>
+      {/if}
+    </div>
+
     <button
       class="btn btn-secondary"
       class:loading={$isCompiling}
@@ -134,7 +175,77 @@
   /* Actions */
   .actions {
     display: flex;
+    align-items: center;
     gap: 8px;
+  }
+
+  .profile-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid rgba(97, 175, 239, 0.2);
+    border-radius: 12px;
+    background: rgba(40, 44, 52, 0.72);
+    color: var(--od-text-bright);
+    padding: 7px 10px;
+    cursor: pointer;
+    min-width: 0;
+  }
+
+  .profile-chip-static {
+    cursor: default;
+  }
+
+  .profile-chip-shell {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .profile-chip-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(97, 175, 239, 0.14);
+    color: #8ecbff;
+    flex-shrink: 0;
+  }
+
+  .profile-chip-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .profile-chip-name {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--od-text-bright);
+    max-width: 180px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .profile-chip-meta {
+    font-size: 10px;
+    color: var(--od-text-dim);
+    text-transform: capitalize;
+    max-width: 220px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .profile-chip-link {
+    color: var(--od-blue);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   /* Base Button Styles */
@@ -237,6 +348,19 @@
     }
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  @media (max-width: 920px) {
+    .header-bar {
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .actions {
+      width: 100%;
+      justify-content: space-between;
+      flex-wrap: wrap;
     }
   }
 </style>

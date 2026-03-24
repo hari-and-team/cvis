@@ -1,26 +1,43 @@
-version: '3.8'
-
 services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    working_dir: /app
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - VITE_API_PROXY_TARGET=http://backend:3001
+      - VITE_STRICT_PORT=true
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   backend:
     build:
       context: .
       dockerfile: server/Dockerfile
-    container_name: cvis-backend
+    working_dir: /app/server
+    command: npm start
     ports:
       - "3001:3001"
     volumes:
-      # Mount server code for hot reload during development
       - ./server:/app/server
-      # Mount node_modules to avoid conflicts
-      - backend_node_modules:/app/node_modules
+      - backend_node_modules:/app/server/node_modules
     environment:
       - NODE_ENV=development
       - DOCKER_ENV=true
       - PORT=3001
+      - FRONTEND_URL=http://localhost:5173
     restart: unless-stopped
-    # Keep stdin open for interactive debugging if needed
     stdin_open: true
     tty: true
 
 volumes:
+  frontend_node_modules:
   backend_node_modules:

@@ -29,9 +29,9 @@
 - [ ] Add account system with roles: `student`, `mentor`, `staff`.
 - [ ] Support explicit student-to-mentor assignment so each learner has a designated guide.
 - [ ] Let mentors/staff teach a concept and assign a curated problem path for that concept.
-- [ ] Let students either choose problems manually or ask AI to select a personalized set.
-- [ ] Add an AI Mentor tab that gives small milestones/checkpoints per problem.
-- [ ] Keep AI guidance incremental to reduce overwhelm while solving LeetCode-style problems.
+- [x] Let students either choose problems manually or ask AI to select a personalized set.
+- [x] Add an AI Mentor tab that gives small milestones/checkpoints per problem.
+- [x] Keep AI guidance incremental to reduce overwhelm while solving LeetCode-style problems.
 - [ ] Add mentor visibility dashboards: student progress, stuck points, milestone completion.
 
 ## Planned: AI Milestone Problem Support

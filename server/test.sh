@@ -108,8 +108,29 @@ else
 fi
 echo ""
 
-# Test 6: Reject unsafe binary path
-echo "Test 6: Reject unsafe binary path"
+# Test 6: AI intent analysis
+echo "Test 6: AI intent analysis"
+cat > "$TEMP_DIR/analyze.json" << 'EOF'
+{
+  "code": "#include <stdio.h>\n\nint binary_search(int *arr, int n, int target) {\n    int low = 0;\n    int high = n - 1;\n    while (low <= high) {\n        int mid = low + (high - low) / 2;\n        if (arr[mid] == target) return mid;\n        if (arr[mid] < target) low = mid + 1;\n        else high = mid - 1;\n    }\n    return -1;\n}\n"
+}
+EOF
+ANALYZE_RESULT=$(curl -s -X POST "$API_BASE/api/analyze/intent" \
+  -H "Content-Type: application/json" \
+  -d @"$TEMP_DIR/analyze.json")
+echo "$ANALYZE_RESULT" | python3 -m json.tool
+ANALYZE_SUCCESS=$(echo "$ANALYZE_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(body.get('success', False))")
+ANALYZE_HAS_SUMMARY=$(echo "$ANALYZE_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(isinstance(body.get('summary'), str) and isinstance(body.get('explanation'), list) and isinstance(body.get('candidates'), list))")
+if [ "$ANALYZE_SUCCESS" = "True" ] && [ "$ANALYZE_HAS_SUMMARY" = "True" ]; then
+  echo "✓ AI intent analysis returned structured output"
+else
+  echo "✗ AI intent analysis output was incomplete"
+  exit 1
+fi
+echo ""
+
+# Test 7: Reject unsafe binary path
+echo "Test 7: Reject unsafe binary path"
 cat > "$TEMP_DIR/unsafe-run.json" << 'EOF'
 {
   "binaryPath": "/bin/ls",

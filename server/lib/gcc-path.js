@@ -5,11 +5,8 @@ import fs from 'fs-extra';
 const execAsync = promisify(exec);
 
 export function getGccPath() {
-  if (process.env.DOCKER_ENV) {
-    return '/usr/local/bin/gcc';
-  }
-
-  return fs.existsSync('/usr/bin/gcc') ? '/usr/bin/gcc' : 'gcc';
+  const knownPaths = ['/usr/bin/gcc', '/usr/local/bin/gcc', '/bin/gcc'];
+  return knownPaths.find((candidate) => fs.existsSync(candidate)) ?? 'gcc';
 }
 
 export async function verifyGcc() {

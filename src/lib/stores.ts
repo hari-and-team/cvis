@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { TraceStep, CompileResult, ExecutionResult } from './types';
+import type { TraceStep, CompileResult, ExecutionResult, UserProfile } from './types';
 
 // Editor state
 export const editorCode = writable<string>('');
@@ -12,7 +12,6 @@ export const traceSteps = writable<TraceStep[]>([]);
 export const currentStepIndex = writable<number>(0);
 export const isPlaying = writable<boolean>(false);
 export const playbackSpeed = writable<'slow' | 'normal' | 'fast'>('normal');
-export const traceInputDraft = writable<string>('');
 
 // Execution state
 export const isCompiling = writable<boolean>(false);
@@ -23,11 +22,15 @@ export const lastExecutionResult = writable<ExecutionResult | null>(null);
 export const errorMessage = writable<string | null>(null);
 export const runSessionId = writable<string | null>(null);
 export const runConsoleTranscript = writable<string>('');
-export const rightPaneTab = writable<'console' | 'visualizer' | 'analysis'>('visualizer');
+export const lastRunInputTranscript = writable<string>('');
+export type WorkspaceRightPaneTab = 'console' | 'visualizer' | 'analysis' | 'mentor';
+export const rightPaneTab = writable<WorkspaceRightPaneTab>('visualizer');
 
 // Learning flow state
-export type RightPaneTab = 'output' | 'visualizer' | 'analysis';
-export const activeRightPaneTab = writable<RightPaneTab>('output');
+export type LearningRightPaneTab = 'output' | 'visualizer' | 'analysis' | 'mentor';
+export const activeRightPaneTab = writable<LearningRightPaneTab>('output');
+export type MentorSelectionMode = 'guided' | 'manual';
+export const mentorSelectionMode = writable<MentorSelectionMode>('guided');
 export const selectedPracticeProblemId = writable<string | null>(null);
 export const activeMilestoneIndex = writable<number>(0);
 export const milestoneProgress = writable<Record<string, boolean>>({});
@@ -43,6 +46,10 @@ export const syncStatus = writable<SyncStatus>('local-only');
 export const syncConflict = writable<SyncConflictState | null>(null);
 export const lastAutosaveAt = writable<number | null>(null);
 export const backupSnapshotCount = writable<number>(0);
+
+// User onboarding and local profile state
+export const userProfile = writable<UserProfile | null>(null);
+export const profileEditorOpen = writable<boolean>(false);
 
 // Derived state
 export const currentTraceStep = derived(

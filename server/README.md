@@ -20,6 +20,12 @@ cd server
 npm install
 ```
 
+For Windows, prefer running the backend through Docker Desktop from the repo root so GCC stays inside Linux containers:
+
+```bash
+npm run docker:up:build
+```
+
 ## Usage
 
 ### Start Server
@@ -31,6 +37,20 @@ node index.js
 ```
 
 The server will start on port 3001 and verify GCC is available.
+
+### Start in Docker
+
+From the repo root:
+
+```bash
+npm run docker:up:build
+```
+
+This starts both:
+- frontend on `http://localhost:5173`
+- backend on `http://localhost:3001`
+
+The backend container includes GCC plus the runtime tools needed for interactive sessions (`stdbuf` and `script`).
 
 ### Run Tests
 
@@ -204,7 +224,8 @@ Notes:
 
 - Node.js 16+
 - GCC compiler
-- Linux/macOS/WSL (for `/tmp` directory)
+- Docker Desktop or Docker Engine + Compose v2 for the containerized path
+- Linux/macOS/WSL for local host-GCC development
 
 ## Future Enhancements
 
