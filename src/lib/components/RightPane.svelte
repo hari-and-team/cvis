@@ -122,6 +122,8 @@
   $: hasDetectedDsa = detectedDsaCards.length > 0;
   $: hasDetectedAlgorithms = detectedAlgorithmCards.length > 0;
   $: dominantAnalysisSection = pickDominantSection();
+  $: mainAnalysisSection =
+    analysisReport.sections.find((section) => section.title === 'main') ?? null;
   $: recommendedProblems = analysisReport.recommendations.slice(0, 4);
   $: personalizedMentorQueue = buildPersonalizedMentorQueue(recommendedProblems);
   $: guidedMentorSelection = personalizedMentorQueue[0] ?? null;
@@ -1151,7 +1153,9 @@
             <section class="analysis-card">
               <div class="analysis-header">
                 <span class="analysis-title">Complexity Overview</span>
-                <span class="analysis-meta">Overall + dominant section</span>
+                <span class="analysis-meta">
+                  Overall{#if mainAnalysisSection} + main(){:else} + dominant section{/if}
+                </span>
               </div>
               <div class="complexity-grid">
                 <div class="complexity-card">
@@ -1162,19 +1166,38 @@
                   <span class="complexity-label">Overall Space</span>
                   <span class="complexity-value">{analysisReport.overallSpaceComplexity}</span>
                 </div>
-                <div class="complexity-card">
-                  <span class="complexity-label">Dominant Section Time</span>
-                  <span class="complexity-value">{dominantAnalysisSection.estimatedTimeComplexity}</span>
-                </div>
-                <div class="complexity-card">
-                  <span class="complexity-label">Dominant Section Space</span>
-                  <span class="complexity-value">{dominantAnalysisSection.estimatedSpaceComplexity}</span>
-                </div>
+                {#if mainAnalysisSection}
+                  <div class="complexity-card">
+                    <span class="complexity-label">main() Time</span>
+                    <span class="complexity-value">{mainAnalysisSection.estimatedTimeComplexity}</span>
+                  </div>
+                  <div class="complexity-card">
+                    <span class="complexity-label">main() Space</span>
+                    <span class="complexity-value">{mainAnalysisSection.estimatedSpaceComplexity}</span>
+                  </div>
+                {:else}
+                  <div class="complexity-card">
+                    <span class="complexity-label">Dominant Section Time</span>
+                    <span class="complexity-value">{dominantAnalysisSection.estimatedTimeComplexity}</span>
+                  </div>
+                  <div class="complexity-card">
+                    <span class="complexity-label">Dominant Section Space</span>
+                    <span class="complexity-value">{dominantAnalysisSection.estimatedSpaceComplexity}</span>
+                  </div>
+                {/if}
               </div>
               {#if analysisReport.overallComplexityReasoning.length > 0}
                 <div class="analysis-notes">
                   {#each analysisReport.overallComplexityReasoning as note}
                     <div class="analysis-note">{note}</div>
+                  {/each}
+                </div>
+              {/if}
+              {#if mainAnalysisSection && mainAnalysisSection.complexityReasoning.length > 0}
+                <div class="analysis-evidence-label">Why main() has this estimate</div>
+                <div class="analysis-notes">
+                  {#each mainAnalysisSection.complexityReasoning as reason}
+                    <div class="analysis-note">{reason}</div>
                   {/each}
                 </div>
               {/if}
