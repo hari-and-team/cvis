@@ -1,4 +1,6 @@
 import type {
+  AnalyzeIntentRequest,
+  AnalyzeIntentResult,
   CompileRequest,
   CompileResult,
   ExecutionRequest,
@@ -14,6 +16,21 @@ import type {
 } from './types';
 
 const API_BASE = '';
+
+export async function analyzeProgramIntent(req: AnalyzeIntentRequest): Promise<AnalyzeIntentResult> {
+  const res = await fetch(`${API_BASE}/api/analyze/intent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req)
+  });
+
+  if (!res.ok) {
+    const error = await res.text().catch(() => res.statusText);
+    throw new Error(`Intent analysis failed: ${error}`);
+  }
+
+  return res.json();
+}
 
 export async function compileCode(req: CompileRequest): Promise<CompileResult> {
   const res = await fetch(`${API_BASE}/api/compile`, {

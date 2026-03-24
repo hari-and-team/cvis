@@ -15,11 +15,20 @@ export function consumeBufferedLines(buffer: string): BufferedInputResult {
     };
   }
 
-  const parts = buffer.split('\n');
-  const remainder = parts.pop() ?? '';
+  // Preserve blank submissions and avoid collapsing consecutive newline
+  // characters when pasted input spans multiple terminal lines.
+  const lines: string[] = [];
+  let lineStart = 0;
+
+  for (let i = 0; i < buffer.length; i += 1) {
+    if (buffer.charCodeAt(i) === 10) {
+      lines.push(buffer.slice(lineStart, i));
+      lineStart = i + 1;
+    }
+  }
 
   return {
-    lines: parts,
-    remainder
+    lines,
+    remainder: buffer.slice(lineStart)
   };
 }

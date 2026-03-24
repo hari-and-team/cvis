@@ -2,13 +2,7 @@ import { writable, derived } from 'svelte/store';
 import type { TraceStep, CompileResult, ExecutionResult } from './types';
 
 // Editor state
-export const editorCode = writable<string>(`#include <stdio.h>
-
-int main() {
-    printf("Hello World\\n");
-    return 0;
-}
-`);
+export const editorCode = writable<string>('');
 
 export const cursorLine = writable<number>(1);
 export const cursorColumn = writable<number>(0);
@@ -18,6 +12,7 @@ export const traceSteps = writable<TraceStep[]>([]);
 export const currentStepIndex = writable<number>(0);
 export const isPlaying = writable<boolean>(false);
 export const playbackSpeed = writable<'slow' | 'normal' | 'fast'>('normal');
+export const traceInputDraft = writable<string>('');
 
 // Execution state
 export const isCompiling = writable<boolean>(false);
@@ -28,6 +23,26 @@ export const lastExecutionResult = writable<ExecutionResult | null>(null);
 export const errorMessage = writable<string | null>(null);
 export const runSessionId = writable<string | null>(null);
 export const runConsoleTranscript = writable<string>('');
+export const rightPaneTab = writable<'console' | 'visualizer' | 'analysis'>('visualizer');
+
+// Learning flow state
+export type RightPaneTab = 'output' | 'visualizer' | 'analysis';
+export const activeRightPaneTab = writable<RightPaneTab>('output');
+export const selectedPracticeProblemId = writable<string | null>(null);
+export const activeMilestoneIndex = writable<number>(0);
+export const milestoneProgress = writable<Record<string, boolean>>({});
+
+// Data-safety and sync state
+export type SyncStatus = 'local-only' | 'saved' | 'conflict';
+export interface SyncConflictState {
+  incomingCode: string;
+  incomingUpdatedAt: number;
+  incomingClientId: string;
+}
+export const syncStatus = writable<SyncStatus>('local-only');
+export const syncConflict = writable<SyncConflictState | null>(null);
+export const lastAutosaveAt = writable<number | null>(null);
+export const backupSnapshotCount = writable<number>(0);
 
 // Derived state
 export const currentTraceStep = derived(

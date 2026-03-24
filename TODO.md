@@ -1,9 +1,22 @@
 # TODO
 
+## Current Focus: Visualizer Fix + UX
+- [x] Keep trace highlight and editor viewport in sync (auto-scroll to active line).
+- [x] Ensure trace starts on the first executable frame (skip global-only frame when possible).
+- [x] Split `Compile` and `Run` so learners can validate compile success without executing.
+- [x] Keep tracing workflow inside `Visualizer` tab and return to edit mode after trace end.
+- [x] Harden empty-state rendering when trace data is partial or only contains globals.
+- [x] Add robust visualizer data contracts for list/array/stack/tree/graph rendering.
+
 ## Current Focus: Input + Terminal Emulation
-- [ ] Make runtime input/output feel like a real C terminal session for learners.
-- [ ] Validate `scanf` menu loops (prompt + typed input shown inline in output).
-- [ ] Add more edge-case tests for interactive input (EOF, invalid input, long sessions).
+- [x] Make runtime input/output feel like a real C terminal session for learners.
+- [x] Validate `scanf` menu loops (prompt + typed input shown inline in output).
+- [x] Add more edge-case tests for interactive input (EOF, invalid input, long sessions).
+
+## Current Focus: Analysis Tab Intelligence
+- [x] Show detected DSA techniques used in the code (for example: linked list, graph, recursion, two pointers, stack, queue, dynamic programming).
+- [x] Display estimated time and space complexity per section/function and for overall program behavior.
+- [x] Show why each technique was detected (keywords/pattern signals) so learners understand the analysis.
 
 ## Deferred (Later)
 - [ ] Adopt an Algorithm Visualizer style architecture:
@@ -28,7 +41,7 @@
 - [ ] Add post-problem reflection prompts to reinforce DSA concepts.
 
 ## Data Safety (No Data Loss)
-- [ ] Autosave code and milestone progress continuously.
-- [ ] Restore session after reload/reconnect (last open problem + active milestone).
-- [ ] Store local backup snapshot in browser storage for offline recovery.
-- [ ] Add server sync conflict handling and recovery UI for edits from multiple devices.
+- [x] Autosave code and milestone progress continuously.
+- [x] Restore session after reload/reconnect (last open problem + active milestone).
+- [x] Store local backup snapshot in browser storage for offline recovery.
+- [x] Add server sync conflict handling and recovery UI for edits from multiple devices.
