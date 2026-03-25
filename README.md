@@ -132,46 +132,6 @@ npm run dev
 
 ---
 
-### Option 3: Shared Backend Mode (Best for teammates without GCC and without Docker)
-
-If some teammates do not have GCC or Docker, only one machine needs to run the backend. Everyone else can run the frontend and point it at that shared backend.
-
-**How it works:**
-- one machine runs the backend with GCC available
-- teammates run only the frontend
-- the frontend sends `/api` requests to the shared backend URL
-
-**Frontend setup on teammate machines:**
-
-Create `.env.local` in the repo root:
-
-```bash
-VITE_API_BASE=http://YOUR-SHARED-BACKEND:3001
-```
-
-Then run:
-
-```bash
-npm install
-npm run dev
-```
-
-**Backend setup on the shared machine:**
-- start the backend normally with local GCC or Docker
-- allow teammate frontend origins with:
-
-```bash
-CORS_ORIGINS=http://localhost:5173,http://192.168.1.20:5173
-```
-
-You can also use `CORS_ORIGINS=*` for a trusted internal network during development.
-
-**Important limitation:**
-- without GCC, Docker, or access to a shared backend, a machine cannot compile and run native C binaries locally
-- the built-in trace/analyzer UI still needs the backend APIs for the full compile/run workflow
-
----
-
 ## Project Structure
 
 ```
