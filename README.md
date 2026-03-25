@@ -13,6 +13,7 @@ A web-based visualization tool for learning Data Structures and Algorithms in C.
 - Server-side GCC compilation via Express backend
 - Docker-based GCC environment for consistent cross-platform behavior
 - Learning-friendly UI with syntax highlighting
+- Optional AI-backed code identification and section understanding in the Analysis tab
 
 ---
 
@@ -25,9 +26,10 @@ For a module-by-module map of the codebase, see `CODEBASE.md`.
 ## Development Setup
 
 ### Prerequisites
-- **Option 1 (Recommended):** Docker Desktop / Docker Engine with Compose v2
-- Node.js 18+ (only needed for local non-Docker development)
-- **Option 2:** Local GCC installation
+- Node.js 18+
+- Optional fallback only:
+  - Docker Desktop / Docker Engine with Compose v2
+  - system GCC
 
 ### Installation
 
@@ -47,7 +49,38 @@ For a module-by-module map of the codebase, see `CODEBASE.md`.
 
 ## Running the Application
 
-### Option 1: Docker Mode (Recommended for Windows and Cross-Platform Consistency)
+### Option 1: Repo-Local Toolchain Mode (Recommended)
+
+This is now the main teammate-safe setup. It keeps the compiler local to the repo instead of depending on system GCC or Docker.
+
+**Usage:**
+
+```bash
+npm install
+cd server && npm install && cd ..
+npm run setup:toolchain
+npm run doctor
+npm run dev:all
+```
+
+If dependencies or the repo-local compiler are missing, `npm run dev:all` now bootstraps the missing pieces automatically on first run before starting the app.
+
+**What happens:**
+- the toolchain bootstrap downloads a pinned GCC bundle into `.cvis-toolchain/`
+- the backend prefers that repo-local compiler automatically
+- `npm run doctor` verifies Node, dependencies, compiler availability, and a real compile/run smoke test
+- teammates on Windows and Linux do not need to install system GCC manually
+
+**Current bootstrap targets:**
+- Windows x64
+- Linux x64
+- Linux arm64
+
+**Current macOS note:**
+- bootstrap is not yet available on macOS
+- use Xcode Command Line Tools or Docker on macOS for now
+
+### Option 2: Docker Mode (Fallback for Consistency)
 
 **Benefits:**
 - ✅ No need to install GCC locally
@@ -99,7 +132,7 @@ If you want the same behavior across devices, use the Docker path on every machi
 
 ---
 
-### Option 2: Local Development Mode (Faster for development if you have GCC)
+### Option 3: Local Development Mode with System GCC (Fallback)
 
 **Prerequisites:**
 - GCC must be installed on your system
@@ -113,6 +146,8 @@ If you want the same behavior across devices, use the Docker path on every machi
 # Single command: start backend + frontend together
 npm run dev:all
 # - Reuses existing backend on :3001 if already running
+# - Installs missing root/backend dependencies on first run
+# - Bootstraps the repo-local toolchain automatically if no compiler is available
 # - Always starts frontend and prints where to open it
 
 # OR run them in separate terminals:
@@ -129,6 +164,68 @@ npm run dev
 - Uses your local GCC installation
 - Faster startup compared to Docker
 - Good for rapid development iteration
+
+### Project-Scoped GCC
+
+The backend now prefers a project-local compiler first. The bootstrap flow writes install metadata into `.cvis-toolchain/`, and the backend resolves that compiler before falling back to system GCC.
+
+Search order:
+
+```bash
+1. CVIS_GCC_PATH
+2. server/toolchain/bin/gcc
+3. .cvis-toolchain/bin/gcc
+4. tools/gcc/bin/gcc
+5. system gcc
+```
+
+Examples:
+
+```bash
+# Use a dedicated compiler path only for this repo
+CVIS_GCC_PATH=/absolute/path/to/gcc npm run backend
+
+# Or bootstrap the managed repo-local toolchain
+npm run setup:toolchain
+```
+
+On Windows, the same project-local lookup also accepts `gcc.exe`, for example:
+
+```powershell
+$env:CVIS_GCC_PATH = "C:\toolchains\mingw64\bin\gcc.exe"
+npm run backend
+```
+
+Compiled binaries use `.exe` on Windows and `.out` on Linux/macOS, so compile, run, and interactive sessions stay aligned across platforms.
+
+The backend health response now reports:
+- `gcc`
+- `gccSource`
+- `gccVersion`
+- `toolchainVersion`
+
+so you can verify which compiler is active.
+
+### Optional: Enable AI Code Understanding
+
+If you want the Analysis tab to use a real LLM for semantic code identification instead of only local heuristics, the backend now prefers a local Ollama model first:
+
+```bash
+OLLAMA_MODEL=mistral:7b
+# optional overrides
+OLLAMA_ANALYZE_MODEL=mistral:7b
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+```
+
+If Ollama is not configured, the backend can still use OpenAI as a secondary provider:
+
+```bash
+OPENAI_API_KEY=your_key_here
+# optional override
+OPENAI_ANALYZE_MODEL=gpt-5-mini
+```
+
+Without either provider configured, the app falls back to the built-in local classifier automatically.
 
 ---
 

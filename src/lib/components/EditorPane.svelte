@@ -7,6 +7,14 @@
   const LINE_HEIGHT_PX = 22;
   const EDITOR_PADDING_PX = 12;
   const AUTO_SCROLL_MARGIN_LINES = 3;
+  const INDENT = '    ';
+  const PAIRS: Record<string, string> = {
+    '(': ')',
+    '[': ']',
+    '{': '}',
+    '"': '"',
+    "'": "'"
+  };
 
   const dispatch = createEventDispatcher<{
     trace: void;
@@ -86,20 +94,141 @@
     syncScroll();
   }
 
+  function updateCodeAndSelection(nextCode: string, selectionStart: number, selectionEnd = selectionStart) {
+    code = nextCode;
+    $editorCode = nextCode;
+    setTimeout(() => {
+      taRef.selectionStart = selectionStart;
+      taRef.selectionEnd = selectionEnd;
+    }, 0);
+  }
+
+  function findLineStart(source: string, index: number) {
+    return source.lastIndexOf('\n', Math.max(0, index - 1)) + 1;
+  }
+
+  function findLineEnd(source: string, index: number) {
+    const nextBreak = source.indexOf('\n', index);
+    return nextBreak === -1 ? source.length : nextBreak;
+  }
+
+  function currentLineIndentAt(source: string, index: number) {
+    const lineStart = findLineStart(source, index);
+    return source.slice(lineStart, index).match(/^\s*/)?.[0] ?? '';
+  }
+
   function onKey(e: KeyboardEvent) {
     if (isTraceMode) {
       return;
     }
 
+    const start = taRef.selectionStart;
+    const end = taRef.selectionEnd;
+    const selectedText = code.slice(start, end);
+    const currentLineStart = findLineStart(code, start);
+    const currentLineIndent = currentLineIndentAt(code, start);
+
     if (e.key === 'Tab') {
       e.preventDefault();
-      const start = taRef.selectionStart;
-      const end = taRef.selectionEnd;
-      code = code.substring(0, start) + '  ' + code.substring(end);
-      $editorCode = code;
-      setTimeout(() => {
-        taRef.selectionStart = taRef.selectionEnd = start + 2;
-      }, 0);
+      const selectionTouchesMultipleLines = selectedText.includes('\n') || start !== end;
+
+      if (selectionTouchesMultipleLines) {
+        const blockStart = currentLineStart;
+        const blockEnd = findLineEnd(code, end);
+        const block = code.slice(blockStart, blockEnd);
+        const lines = block.split('\n');
+
+        if (e.shiftKey) {
+          let removed = 0;
+          const updated = lines.map((line) => {
+            if (line.startsWith(INDENT)) {
+              removed += INDENT.length;
+              return line.slice(INDENT.length);
+            }
+            const partialIndent = line.match(/^ {1,3}/)?.[0]?.length ?? 0;
+            if (partialIndent > 0) {
+              removed += partialIndent;
+              return line.slice(partialIndent);
+            }
+            return line;
+          });
+
+          const nextCode = code.slice(0, blockStart) + updated.join('\n') + code.slice(blockEnd);
+          const nextStart = start === end ? Math.max(blockStart, start - INDENT.length) : blockStart;
+          const nextEnd = Math.max(nextStart, end - removed);
+          updateCodeAndSelection(nextCode, nextStart, nextEnd);
+        } else {
+          const updated = lines.map((line) => `${INDENT}${line}`);
+          const nextCode = code.slice(0, blockStart) + updated.join('\n') + code.slice(blockEnd);
+          const added = lines.length * INDENT.length;
+          const nextStart = start === end ? start + INDENT.length : blockStart;
+          const nextEnd = start === end ? nextStart : end + added;
+          updateCodeAndSelection(nextCode, nextStart, nextEnd);
+        }
+      } else if (e.shiftKey) {
+        const removable = code.slice(Math.max(currentLineStart, start - INDENT.length), start);
+        const removeWidth = removable === INDENT ? INDENT.length : removable.match(/ +$/)?.[0]?.length ?? 0;
+        if (removeWidth > 0) {
+          const nextCode = code.slice(0, start - removeWidth) + code.slice(end);
+          updateCodeAndSelection(nextCode, start - removeWidth);
+        }
+      } else {
+        const nextCode = code.substring(0, start) + INDENT + code.substring(end);
+        updateCodeAndSelection(nextCode, start + INDENT.length);
+      }
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const beforeCursor = code[start - 1] ?? '';
+      const afterCursor = code[end] ?? '';
+      const beforeLine = code.slice(currentLineStart, start);
+      const shouldIndentNextLine = /\{\s*$/.test(beforeLine);
+      const shouldExpandBlock = beforeCursor === '{' && afterCursor === '}';
+      const nextIndent = shouldIndentNextLine ? `${currentLineIndent}${INDENT}` : currentLineIndent;
+      const insertion = shouldExpandBlock
+        ? `\n${nextIndent}\n${currentLineIndent}`
+        : `\n${nextIndent}`;
+
+      const nextCode = code.slice(0, start) + insertion + code.slice(end);
+      const nextCursor = start + 1 + nextIndent.length;
+      updateCodeAndSelection(nextCode, nextCursor);
+      return;
+    }
+
+    if (e.key in PAIRS && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const closing = PAIRS[e.key];
+      const nextChar = code[end] ?? '';
+
+      if ((e.key === '"' || e.key === "'") && nextChar === e.key) {
+        e.preventDefault();
+        updateCodeAndSelection(code, start + 1);
+        return;
+      }
+
+      e.preventDefault();
+      const wrapSelection = selectedText.length > 0 && e.key !== '"' && e.key !== "'";
+      const insertion = wrapSelection ? `${e.key}${selectedText}${closing}` : `${e.key}${closing}`;
+      const cursorPosition = wrapSelection ? start + insertion.length : start + 1;
+      updateCodeAndSelection(code.slice(0, start) + insertion + code.slice(end), cursorPosition);
+      return;
+    }
+
+    if ((e.key === ')' || e.key === ']' || e.key === '}') && code[end] === e.key) {
+      e.preventDefault();
+      updateCodeAndSelection(code, start + 1);
+      return;
+    }
+
+    if (e.key === 'Backspace' && start === end && start > 0) {
+      const beforeCursor = code[start - 1] ?? '';
+      const afterCursor = code[start] ?? '';
+      if (PAIRS[beforeCursor] === afterCursor) {
+        e.preventDefault();
+        updateCodeAndSelection(code.slice(0, start - 1) + code.slice(start + 1), start - 1);
+      }
+      return;
     }
   }
 

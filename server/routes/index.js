@@ -1,4 +1,4 @@
-import { getGccPath } from '../lib/gcc-path.js';
+import { getGccHealthDetails } from '../lib/gcc-path.js';
 import { compileC } from '../lib/compile-c.js';
 import { runBinary } from '../lib/run-binary.js';
 import {
@@ -45,7 +45,8 @@ function runValidationResponse(message, error = 'Invalid run request') {
     stdout: '',
     stderr: message,
     exitCode: 1,
-    executionTime: 0
+    executionTime: 0,
+    peakMemoryBytes: null
   };
 }
 
@@ -54,7 +55,8 @@ function runServerErrorResponse(message) {
     exitCode: 1,
     stdout: '',
     stderr: message,
-    executionTime: 0
+    executionTime: 0,
+    peakMemoryBytes: null
   };
 }
 
@@ -81,6 +83,7 @@ function analyzeValidationResponse(message) {
   return {
     success: false,
     error: 'Invalid analyze request',
+    source: 'heuristic',
     primaryIntent: 'generic',
     primaryLabel: 'Generic Algorithm',
     confidence: 0.35,
@@ -88,16 +91,19 @@ function analyzeValidationResponse(message) {
     candidates: [],
     summary: 'The analyzer needs code before it can classify the program shape.',
     explanation: [message],
+    sectionPurposes: [],
+    optimizationIdeas: [],
     engine: 'validation-error',
     errors: [message]
   };
 }
 
 export function registerRoutes(app) {
-  app.get('/health', (_req, res) => {
+  app.get('/health', async (_req, res) => {
+    const gcc = await getGccHealthDetails();
     res.json({
       status: 'ok',
-      gcc: getGccPath(),
+      ...gcc,
       environment: process.env.DOCKER_ENV ? 'docker' : 'local',
       timestamp: new Date().toISOString()
     });
@@ -212,6 +218,7 @@ export function registerRoutes(app) {
       done: result.done,
       exitCode: result.exitCode,
       executionTime: result.executionTime,
+      peakMemoryBytes: result.peakMemoryBytes,
       inputClosed: result.inputClosed,
       timedOut: result.timedOut,
       outputLimitHit: result.outputLimitHit,
@@ -304,6 +311,7 @@ export function registerRoutes(app) {
       return res.status(500).json({
         success: false,
         error: getErrorMessage(err),
+        source: 'heuristic',
         primaryIntent: 'generic',
         primaryLabel: 'Generic Algorithm',
         confidence: 0.35,
@@ -311,6 +319,8 @@ export function registerRoutes(app) {
         candidates: [],
         summary: 'The analyzer hit a server error before it could classify the code.',
         explanation: [],
+        sectionPurposes: [],
+        optimizationIdeas: [],
         engine: 'server-error'
       });
     }

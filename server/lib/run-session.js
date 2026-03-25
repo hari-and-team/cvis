@@ -1,12 +1,11 @@
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs-extra';
-import os from 'os';
 import path from 'path';
 import { EXECUTION_LIMITS, REQUEST_LIMITS } from '../config/constants.js';
+import { isSafeManagedBinaryPath } from './binary-artifacts.js';
+import { trackChildProcessMetrics } from './process-metrics.js';
 
-const TMP_DIR = path.resolve(os.tmpdir());
-const SAFE_BINARY_NAME = /^code_[A-Za-z0-9_-]+\.out$/;
 const STDBUF_BINARIES = ['/usr/bin/stdbuf', '/bin/stdbuf'];
 const STDBUF_PATH = STDBUF_BINARIES.find((candidate) => fs.pathExistsSync(candidate)) ?? null;
 const SCRIPT_BINARIES = ['/usr/bin/script', '/bin/script'];
@@ -43,18 +42,6 @@ function spawnRunProcess(binaryPath, normalizedArgs) {
 
   const child = spawn(binaryPath, normalizedArgs, { stdio: 'pipe' });
   return { child, usesPty: false };
-}
-
-function isSafeBinaryPath(binaryPath) {
-  if (typeof binaryPath !== 'string' || !binaryPath.trim()) {
-    return false;
-  }
-
-  const resolved = path.resolve(binaryPath);
-  const inTmpDir = resolved.startsWith(`${TMP_DIR}${path.sep}`);
-  const safeName = SAFE_BINARY_NAME.test(path.basename(resolved));
-
-  return inTmpDir && safeName;
 }
 
 function normalizeArgs(args) {
@@ -123,7 +110,7 @@ function scheduleSessionCleanup(sessionId) {
 
 export async function startRunSession(binaryPath, args = []) {
   const resolvedBinaryPath = path.resolve(binaryPath || '');
-  const safeBinaryPath = isSafeBinaryPath(resolvedBinaryPath) ? resolvedBinaryPath : null;
+  const safeBinaryPath = isSafeManagedBinaryPath(resolvedBinaryPath) ? resolvedBinaryPath : null;
 
   if (!safeBinaryPath) {
     return {
@@ -145,6 +132,7 @@ export async function startRunSession(binaryPath, args = []) {
   const sessionId = crypto.randomUUID();
   const normalizedArgs = normalizeArgs(args);
   const { child, usesPty } = spawnRunProcess(safeBinaryPath, normalizedArgs);
+  const metrics = trackChildProcessMetrics(child);
 
   const session = {
     sessionId,
@@ -157,6 +145,7 @@ export async function startRunSession(binaryPath, args = []) {
     done: false,
     exitCode: null,
     executionTime: 0,
+    peakMemoryBytes: null,
     startTime: Date.now(),
     timedOut: false,
     outputLimitHit: false,
@@ -234,6 +223,7 @@ export async function startRunSession(binaryPath, args = []) {
   child.on('close', async (code, signal) => {
     session.done = true;
     session.executionTime = Date.now() - session.startTime;
+    session.peakMemoryBytes = await metrics.stop();
     session.exitSignal = signal ?? null;
     session.exitCode = code ?? (
       session.timedOut ? 124 : session.outputLimitHit ? 122 : session.stopRequested ? 130 : 1
@@ -285,6 +275,7 @@ export async function startRunSession(binaryPath, args = []) {
     done: session.done,
     inputClosed: session.inputClosed,
     timedOut: session.timedOut,
+    peakMemoryBytes: session.peakMemoryBytes,
     outputLimitHit: session.outputLimitHit,
     stopRequested: session.stopRequested,
     completionReason: session.completionReason,
@@ -311,6 +302,7 @@ export function pollRunSession(sessionId) {
     done: session.done,
     exitCode: session.exitCode,
     executionTime: session.executionTime,
+    peakMemoryBytes: session.peakMemoryBytes,
     inputClosed: session.inputClosed,
     timedOut: session.timedOut,
     outputLimitHit: session.outputLimitHit,

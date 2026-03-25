@@ -17,69 +17,78 @@ import type {
 
 const API_BASE = '';
 
-export async function analyzeProgramIntent(req: AnalyzeIntentRequest): Promise<AnalyzeIntentResult> {
-  const res = await fetch(`${API_BASE}/api/analyze/intent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req)
-  });
+function backendUnavailableMessage(action: string, error: unknown): Error {
+  const base =
+    `${action} failed because the backend is unavailable. Start the app with \`npm run dev:all\`. ` +
+    'If this machine does not have the repo-local compiler yet, run `npm run setup:toolchain` first.';
+
+  if (error instanceof Error && error.message) {
+    return new Error(`${base} (${error.message})`);
+  }
+
+  return new Error(base);
+}
+
+async function requestJson<T>(endpoint: string, init: RequestInit, action: string): Promise<T> {
+  let res: Response;
+
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, init);
+  } catch (error) {
+    throw backendUnavailableMessage(action, error);
+  }
 
   if (!res.ok) {
     const error = await res.text().catch(() => res.statusText);
-    throw new Error(`Intent analysis failed: ${error}`);
+    throw new Error(`${action} failed: ${error}`);
   }
 
   return res.json();
+}
+
+export async function analyzeProgramIntent(req: AnalyzeIntentRequest): Promise<AnalyzeIntentResult> {
+  return requestJson<AnalyzeIntentResult>('/api/analyze/intent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req)
+  }, 'Intent analysis');
 }
 
 export async function compileCode(req: CompileRequest): Promise<CompileResult> {
-  const res = await fetch(`${API_BASE}/api/compile`, {
+  return requestJson<CompileResult>('/api/compile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req)
-  });
-  
-  if (!res.ok) {
-    const error = await res.text().catch(() => res.statusText);
-    throw new Error(`Compile failed: ${error}`);
-  }
-  return res.json();
+  }, 'Compile');
 }
 
 export async function runBinary(req: ExecutionRequest): Promise<ExecutionResult> {
-  const res = await fetch(`${API_BASE}/api/run`, {
+  return requestJson<ExecutionResult>('/api/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req)
-  });
-  
-  if (!res.ok) {
-    const error = await res.text().catch(() => res.statusText);
-    throw new Error(`Run failed: ${error}`);
-  }
-  return res.json();
+  }, 'Run');
 }
 
 export async function traceCode(req: TraceRequest): Promise<TraceResult> {
-  const res = await fetch(`${API_BASE}/api/trace`, {
+  return requestJson<TraceResult>('/api/trace', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req)
-  });
-  
-  if (!res.ok) {
-    const error = await res.text().catch(() => res.statusText);
-    throw new Error(`Trace failed: ${error}`);
-  }
-  return res.json();
+  }, 'Trace');
 }
 
 export async function startRunSession(req: RunSessionStartRequest): Promise<RunSessionStartResult> {
-  const res = await fetch(`${API_BASE}/api/run/start`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req)
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/run/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req)
+    });
+  } catch (error) {
+    throw backendUnavailableMessage('Run session start', error);
+  }
 
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.success) {
@@ -92,7 +101,12 @@ export async function startRunSession(req: RunSessionStartRequest): Promise<RunS
 
 export async function pollRunSession(sessionId: string): Promise<RunSessionPollResult> {
   const params = new URLSearchParams({ sessionId });
-  const res = await fetch(`${API_BASE}/api/run/poll?${params.toString()}`);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/run/poll?${params.toString()}`);
+  } catch (error) {
+    throw backendUnavailableMessage('Run session poll', error);
+  }
 
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.success) {
@@ -104,11 +118,16 @@ export async function pollRunSession(sessionId: string): Promise<RunSessionPollR
 }
 
 export async function sendRunInput(req: RunSessionInputRequest): Promise<RunSessionInputResult> {
-  const res = await fetch(`${API_BASE}/api/run/input`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req)
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/run/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req)
+    });
+  } catch (error) {
+    throw backendUnavailableMessage('Run session input', error);
+  }
 
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.success) {
@@ -120,11 +139,16 @@ export async function sendRunInput(req: RunSessionInputRequest): Promise<RunSess
 }
 
 export async function stopRunSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/run/stop`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId })
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/run/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId })
+    });
+  } catch (error) {
+    throw backendUnavailableMessage('Run session stop', error);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -134,11 +158,16 @@ export async function stopRunSession(sessionId: string): Promise<void> {
 }
 
 export async function closeRunInput(sessionId: string): Promise<RunSessionEofResult> {
-  const res = await fetch(`${API_BASE}/api/run/eof`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId })
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/run/eof`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId })
+    });
+  } catch (error) {
+    throw backendUnavailableMessage('Run session eof', error);
+  }
 
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.success) {

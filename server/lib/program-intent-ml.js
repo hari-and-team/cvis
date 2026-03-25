@@ -284,7 +284,7 @@ function buildExplanation(best, matchedSignals, nextCandidate) {
   return explanation;
 }
 
-export async function analyzeProgramIntent(code) {
+function analyzeProgramIntentHeuristic(code) {
   const source = stripCommentsAndStrings(code);
   const candidates = [];
 
@@ -303,6 +303,7 @@ export async function analyzeProgramIntent(code) {
     return {
       success: true,
       engine: 'heuristic-v2',
+      source: 'heuristic',
       primaryIntent: 'generic',
       primaryLabel: LABELS.generic,
       confidence: 0.35,
@@ -316,7 +317,9 @@ export async function analyzeProgramIntent(code) {
         }
       ],
       summary: 'No strong algorithm fingerprint was detected yet.',
-      explanation: ['Add more structure, function names, or data-structure cues for a stronger match.']
+      explanation: ['Add more structure, function names, or data-structure cues for a stronger match.'],
+      sectionPurposes: [],
+      optimizationIdeas: []
     };
   }
 
@@ -344,12 +347,498 @@ export async function analyzeProgramIntent(code) {
   return {
     success: true,
     engine: 'heuristic-v2',
+    source: 'heuristic',
     primaryIntent: best.intent,
     primaryLabel: best.label,
     confidence,
     matchedSignals,
     candidates: topCandidates,
     summary: buildSummary(best, confidence, matchedSignals, second),
-    explanation: buildExplanation(best, matchedSignals, second)
+    explanation: buildExplanation(best, matchedSignals, second),
+    sectionPurposes: [],
+    optimizationIdeas: []
   };
+}
+
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+const OLLAMA_ANALYZE_MODEL = process.env.OLLAMA_ANALYZE_MODEL || process.env.OLLAMA_MODEL || 'mistral:7b';
+const OPENAI_RESPONSES_URL = process.env.OPENAI_RESPONSES_URL || 'https://api.openai.com/v1/responses';
+const OPENAI_ANALYZE_MODEL = process.env.OPENAI_ANALYZE_MODEL || process.env.OPENAI_MODEL || 'gpt-5-mini';
+const OLLAMA_TIMEOUT_MS = Number.parseInt(process.env.OLLAMA_TIMEOUT_MS || '45000', 10);
+const OPENAI_TIMEOUT_MS = Number.parseInt(process.env.OPENAI_TIMEOUT_MS || '20000', 10);
+const INTENT_ENUM = Object.keys(LABELS);
+const INTENT_ALIASES = {
+  sorting: ['sorting', 'sort', 'sorted', 'ordering'],
+  searching: ['searching', 'search', 'binary search', 'lookup'],
+  'linked-list': ['linked-list', 'linked list', 'singly linked list', 'doubly linked list', 'list node'],
+  stack: ['stack', 'lifo', 'last in first out'],
+  queue: ['queue', 'fifo', 'first in first out'],
+  tree: ['tree', 'binary tree', 'bst', 'binary search tree', 'avl tree'],
+  graph: ['graph', 'adjacency list', 'adjacency matrix', 'traversal graph'],
+  'dynamic-programming': ['dynamic-programming', 'dynamic programming', 'dp', 'memoization', 'tabulation'],
+  recursion: ['recursion', 'recursive'],
+  matrix: ['matrix', 'grid', '2d array']
+};
+const AI_RESULT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    primaryIntent: {
+      type: 'string',
+      enum: INTENT_ENUM
+    },
+    confidence: {
+      type: 'number'
+    },
+    matchedSignals: {
+      type: 'array',
+      items: { type: 'string' }
+    },
+    summary: {
+      type: 'string'
+    },
+    explanation: {
+      type: 'array',
+      items: { type: 'string' }
+    },
+    candidates: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          intent: { type: 'string', enum: INTENT_ENUM },
+          confidence: { type: 'number' }
+        },
+        required: ['intent', 'confidence']
+      }
+    },
+    sectionPurposes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          purpose: { type: 'string' }
+        },
+        required: ['title', 'purpose']
+      }
+    },
+    optimizationIdeas: {
+      type: 'array',
+      items: { type: 'string' }
+    }
+  },
+  required: [
+    'primaryIntent',
+    'confidence',
+    'matchedSignals',
+    'summary',
+    'explanation',
+    'candidates',
+    'sectionPurposes',
+    'optimizationIdeas'
+  ]
+};
+
+const OLLAMA_RESULT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    primaryIntent: {
+      type: 'string'
+    },
+    confidence: {
+      type: 'number'
+    },
+    summary: {
+      type: 'string'
+    },
+    explanation: {
+      type: 'array',
+      items: { type: 'string' }
+    }
+  },
+  required: ['primaryIntent', 'confidence', 'summary', 'explanation']
+};
+
+function clipCodeForModel(code) {
+  const source = typeof code === 'string' ? code.trim() : '';
+  return source.length <= 12000 ? source : `${source.slice(0, 12000)}\n/* truncated for analysis */`;
+}
+
+function extractResponseText(body) {
+  if (typeof body?.output_text === 'string' && body.output_text.trim()) {
+    return body.output_text;
+  }
+
+  if (!Array.isArray(body?.output)) {
+    return '';
+  }
+
+  const texts = [];
+  for (const item of body.output) {
+    if (!Array.isArray(item?.content)) continue;
+    for (const part of item.content) {
+      if (typeof part?.text === 'string') {
+        texts.push(part.text);
+      }
+    }
+  }
+
+  return texts.join('\n').trim();
+}
+
+function normalizeIntent(intent, fallbackText = '') {
+  const raw = typeof intent === 'string' ? intent.trim().toLowerCase() : '';
+  const extra = typeof fallbackText === 'string' ? fallbackText.trim().toLowerCase() : '';
+  const combined = `${raw} ${extra}`.trim();
+
+  if (INTENT_ENUM.includes(raw)) {
+    return raw;
+  }
+
+  for (const [intentKey, aliases] of Object.entries(INTENT_ALIASES)) {
+    if (aliases.some((alias) => raw === alias || combined.includes(alias))) {
+      return intentKey;
+    }
+  }
+
+  for (const [intentKey, label] of Object.entries(LABELS)) {
+    const normalizedLabel = label.toLowerCase();
+    if (raw === normalizedLabel || combined.includes(normalizedLabel)) {
+      return intentKey;
+    }
+  }
+
+  return 'generic';
+}
+
+function normalizeAiResult(aiResult, heuristicResult, engine) {
+  const primaryIntentGuess = normalizeIntent(
+    aiResult?.primaryIntent,
+    `${aiResult?.summary ?? ''} ${(aiResult?.explanation ?? []).join(' ')}`
+  );
+  const primaryIntent =
+    primaryIntentGuess === 'generic' && heuristicResult.primaryIntent !== 'generic'
+      ? heuristicResult.primaryIntent
+      : primaryIntentGuess;
+  const primaryLabel = LABELS[primaryIntent] || heuristicResult.primaryLabel;
+  const matchedSignals = Array.isArray(aiResult?.matchedSignals)
+    ? aiResult.matchedSignals.filter((value) => typeof value === 'string' && value.trim()).slice(0, 6)
+    : heuristicResult.matchedSignals;
+  const explanation = Array.isArray(aiResult?.explanation)
+    ? aiResult.explanation.filter((value) => typeof value === 'string' && value.trim()).slice(0, 4)
+    : heuristicResult.explanation;
+  const candidates = Array.isArray(aiResult?.candidates)
+    ? aiResult.candidates
+        .map((candidate) => {
+          const intent = normalizeIntent(candidate?.intent, aiResult?.summary ?? '');
+          const confidence = clamp(Number(candidate?.confidence) || 0, 0.05, 0.99);
+          return {
+            intent,
+            label: LABELS[intent],
+            score: confidence,
+            confidence
+          };
+        })
+        .slice(0, 4)
+    : heuristicResult.candidates;
+
+  return {
+    success: true,
+    engine,
+    source: 'ai',
+    primaryIntent,
+    primaryLabel,
+    confidence: clamp(Number(aiResult?.confidence) || heuristicResult.confidence, 0.1, 0.99),
+    matchedSignals,
+    candidates: candidates?.length ? candidates : heuristicResult.candidates,
+    summary:
+      typeof aiResult?.summary === 'string' && aiResult.summary.trim()
+        ? aiResult.summary.trim()
+        : heuristicResult.summary,
+    explanation,
+    sectionPurposes: Array.isArray(aiResult?.sectionPurposes)
+      ? aiResult.sectionPurposes
+          .filter((entry) => typeof entry?.title === 'string' && typeof entry?.purpose === 'string')
+          .map((entry) => ({ title: entry.title.trim(), purpose: entry.purpose.trim() }))
+          .slice(0, 6)
+      : [],
+    optimizationIdeas: Array.isArray(aiResult?.optimizationIdeas)
+      ? aiResult.optimizationIdeas.filter((value) => typeof value === 'string' && value.trim()).slice(0, 5)
+      : []
+  };
+}
+
+function enrichCompactAiResult(aiResult, heuristicResult) {
+  const primaryIntent = normalizeIntent(
+    aiResult?.primaryIntent,
+    `${aiResult?.summary ?? ''} ${(aiResult?.explanation ?? []).join(' ')}`
+  );
+  const inferredSignals = heuristicResult.matchedSignals.slice(0, 4);
+
+  return {
+    primaryIntent,
+    confidence: Number(aiResult?.confidence) || heuristicResult.confidence,
+    matchedSignals: inferredSignals,
+    summary: typeof aiResult?.summary === 'string' ? aiResult.summary : heuristicResult.summary,
+    explanation: Array.isArray(aiResult?.explanation) ? aiResult.explanation : heuristicResult.explanation,
+    candidates: [
+      {
+        intent: primaryIntent,
+        confidence: Number(aiResult?.confidence) || heuristicResult.confidence
+      },
+      ...((heuristicResult.candidates ?? [])
+        .filter((candidate) => candidate.intent !== primaryIntent)
+        .slice(0, 2)
+        .map((candidate) => ({
+          intent: candidate.intent,
+          confidence: candidate.confidence
+        })))
+    ],
+    sectionPurposes: [],
+    optimizationIdeas: []
+  };
+}
+
+function buildAiPrompt(code, heuristicResult) {
+  return [
+    'Analyze this C code by behavior and structure, not by variable names alone.',
+    'The code may use arbitrary function and variable names.',
+    'Use these heuristic hints only as weak context, not as ground truth:',
+    JSON.stringify(
+      {
+        primaryIntent: heuristicResult.primaryIntent,
+        primaryLabel: heuristicResult.primaryLabel,
+        matchedSignals: heuristicResult.matchedSignals,
+        topCandidates: heuristicResult.candidates
+      },
+      null,
+      2
+    ),
+    'Return JSON that matches this schema exactly:',
+    JSON.stringify(AI_RESULT_SCHEMA),
+    'Focus on:',
+    '- the most likely program/data-structure intent',
+    '- short behavioral signals',
+    '- a short summary',
+    '- a few short explanation bullets',
+    '- short section purposes for major sections/functions',
+    '- a few concrete optimization ideas',
+    'Code:',
+    `\`\`\`c\n${clipCodeForModel(code)}\n\`\`\``
+  ].join('\n');
+}
+
+function buildOllamaPrompt(code, heuristicResult) {
+  return [
+    'Classify this C code by behavior, not by variable names.',
+    'Return short JSON only.',
+    'Fields:',
+    '- primaryIntent',
+    '- confidence',
+    '- summary',
+    '- explanation',
+    'Heuristic hints for weak context only:',
+    JSON.stringify(
+      {
+        primaryIntent: heuristicResult.primaryIntent,
+        primaryLabel: heuristicResult.primaryLabel,
+        matchedSignals: heuristicResult.matchedSignals
+      },
+      null,
+      2
+    ),
+    'Code:',
+    `\`\`\`c\n${clipCodeForModel(code)}\n\`\`\``
+  ].join('\n');
+}
+
+async function fetchJsonWithTimeout(url, options, timeoutMs, timeoutLabel) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    return response;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`${timeoutLabel} timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function analyzeProgramIntentWithOllama(code, heuristicResult) {
+  if (!OLLAMA_ANALYZE_MODEL) {
+    return null;
+  }
+
+  const response = await fetchJsonWithTimeout(
+    `${OLLAMA_BASE_URL.replace(/\/$/, '')}/api/chat`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: OLLAMA_ANALYZE_MODEL,
+        stream: false,
+        format: OLLAMA_RESULT_SCHEMA,
+        options: {
+          temperature: 0
+        },
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You classify C programs by semantics, control flow, and data behavior. Do not rely on names alone. Return concise JSON only.'
+          },
+          {
+            role: 'user',
+            content: buildOllamaPrompt(code, heuristicResult)
+          }
+        ]
+      })
+    },
+    OLLAMA_TIMEOUT_MS,
+    'Ollama analysis'
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => response.statusText);
+    throw new Error(`Ollama analyze request failed: ${errorText}`);
+  }
+
+  const body = await response.json();
+  const text = typeof body?.message?.content === 'string' ? body.message.content.trim() : '';
+  if (!text) {
+    throw new Error('Ollama analyze request returned an empty response.');
+  }
+
+  return normalizeAiResult(
+    enrichCompactAiResult(JSON.parse(text), heuristicResult),
+    heuristicResult,
+    `ollama:${OLLAMA_ANALYZE_MODEL}`
+  );
+}
+
+async function analyzeProgramIntentWithOpenAI(code, heuristicResult) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  const payload = {
+    model: OPENAI_ANALYZE_MODEL,
+    input: [
+      {
+        role: 'system',
+        content: [
+          {
+            type: 'input_text',
+            text:
+              'You classify C programs by behavior and structure, not by variable names alone. Prefer semantic understanding over keyword matching. Return only valid JSON that matches the schema.'
+          }
+        ]
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: [
+              'Analyze this C code.',
+              buildAiPrompt(code, heuristicResult)
+            ].join('\n')
+          }
+        ]
+      }
+    ],
+    max_output_tokens: 900,
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'c_code_understanding',
+        schema: AI_RESULT_SCHEMA,
+        strict: true
+      }
+    }
+  };
+
+  const response = await fetchJsonWithTimeout(
+    OPENAI_RESPONSES_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(payload)
+    },
+    OPENAI_TIMEOUT_MS,
+    'OpenAI analysis'
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => response.statusText);
+    throw new Error(`OpenAI analyze request failed: ${errorText}`);
+  }
+
+  const body = await response.json();
+  const text = extractResponseText(body);
+  if (!text) {
+    throw new Error('OpenAI analyze request returned an empty response.');
+  }
+
+  return normalizeAiResult(JSON.parse(text), heuristicResult, `openai:${OPENAI_ANALYZE_MODEL}`);
+}
+
+export async function analyzeProgramIntent(code) {
+  const heuristicResult = analyzeProgramIntentHeuristic(code);
+
+  if (OLLAMA_ANALYZE_MODEL) {
+    try {
+      return await analyzeProgramIntentWithOllama(code, heuristicResult);
+    } catch (error) {
+      console.warn('Ollama semantic analysis failed:', error instanceof Error ? error.message : error);
+      if (!process.env.OPENAI_API_KEY) {
+        const fallbackExplanation = heuristicResult.explanation ? [...heuristicResult.explanation] : [];
+        fallbackExplanation.unshift('Ollama semantic analysis was unavailable, so the app fell back to the local classifier.');
+
+        return {
+          ...heuristicResult,
+          source: 'heuristic-fallback',
+          engine: `${heuristicResult.engine}-fallback`,
+          explanation: fallbackExplanation
+        };
+      }
+    }
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return heuristicResult;
+  }
+
+  try {
+    return await analyzeProgramIntentWithOpenAI(code, heuristicResult);
+  } catch (error) {
+    console.warn('OpenAI semantic analysis failed:', error instanceof Error ? error.message : error);
+    const fallbackExplanation = heuristicResult.explanation ? [...heuristicResult.explanation] : [];
+    fallbackExplanation.unshift('AI semantic analysis was unavailable, so the app fell back to the local classifier.');
+
+    return {
+      ...heuristicResult,
+      source: 'heuristic-fallback',
+      engine: `${heuristicResult.engine}-fallback`,
+      explanation: fallbackExplanation
+    };
+  }
 }

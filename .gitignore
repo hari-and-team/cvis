@@ -38,3 +38,4 @@ public/wasm/*.mem
 # Temporary
 *.tmp
 *.temp
+.cvis-toolchain/

@@ -33,6 +33,8 @@ async function main() {
   log('Test 1: Health check');
   const health = await getJson(`${API_BASE}/health`);
   assert(health.res.ok, 'Health check failed');
+  assert(typeof health.body?.gccSource === 'string', 'gccSource missing from health response');
+  assert('gccVersion' in (health.body ?? {}), 'gccVersion missing from health response');
   log(`✓ Health: ${JSON.stringify(health.body)}`);
   log('');
 

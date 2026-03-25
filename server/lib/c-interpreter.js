@@ -230,6 +230,13 @@ class Parser {
     while (this.peek().type !== 'EOF') {
       if (this.peek().type === 'PREP') {
         program.body.push({ type: 'Preprocessor', value: this.advance().value });
+      } else if (
+        this.peek().type === 'KW' &&
+        this.peek().value === 'struct' &&
+        this.peek(1).type === 'ID' &&
+        this.peek(2).value === '{'
+      ) {
+        program.body.push(this.parseStructDefinition());
       } else if (this.isTypeKeyword()) {
         const decl = this.parseDeclaration();
         if (decl.type === 'FunctionDef') {
@@ -308,10 +315,35 @@ class Parser {
 
   parseType() {
     let type = '';
+    if (this.peek().type === 'KW' && this.peek().value === 'struct') {
+      type = this.advance().value;
+      if (this.peek().type === 'ID') {
+        type += ` ${this.advance().value}`;
+      }
+      return type;
+    }
+
     while (this.peek().type === 'KW' && TYPES.has(this.peek().value)) {
       type += (type ? ' ' : '') + this.advance().value;
     }
     return type || 'int';
+  }
+
+  parseStructDefinition() {
+    const line = this.peek().line;
+    this.expect('KW', 'struct');
+    const name = this.match('ID')?.value || '';
+    this.expect('OP', '{');
+
+    let depth = 1;
+    while (depth > 0 && this.peek().type !== 'EOF') {
+      if (this.peek().value === '{') depth += 1;
+      else if (this.peek().value === '}') depth -= 1;
+      this.advance();
+    }
+
+    this.match('OP', ';');
+    return { type: 'StructDef', name, line };
   }
 
   parseParams() {
@@ -586,6 +618,16 @@ class Parser {
     const t = this.peek();
     const line = t.line;
 
+    if (this.peek().value === '(' && this.looksLikeCast()) {
+      this.expect('OP', '(');
+      let castType = this.parseType();
+      while (this.match('OP', '*')) {
+        castType += '*';
+      }
+      this.expect('OP', ')');
+      return { type: 'Cast', castType, operand: this.parseUnary(), line };
+    }
+
     if (t.type === 'NUM') {
       return { type: 'Number', value: this.advance().value, line };
     }
@@ -627,6 +669,36 @@ class Parser {
 
     this.advance();
     return { type: 'Number', value: 0, line };
+  }
+
+  looksLikeCast() {
+    if (this.peek().value !== '(') {
+      return false;
+    }
+
+    let cursor = this.pos + 1;
+    const token = this.tokens[cursor];
+    if (!token) {
+      return false;
+    }
+
+    if (!(token.type === 'KW' && (TYPES.has(token.value) || token.value === 'void' || token.value === 'struct'))) {
+      return false;
+    }
+
+    if (token.value === 'struct') {
+      cursor += 1;
+      if (this.tokens[cursor]?.type !== 'ID') {
+        return false;
+      }
+    }
+
+    cursor += 1;
+    while (this.tokens[cursor]?.value === '*') {
+      cursor += 1;
+    }
+
+    return this.tokens[cursor]?.value === ')';
   }
 }
 
@@ -895,6 +967,50 @@ class Interpreter {
     }
   }
 
+  ensureHeapObject(address) {
+    if (!address) {
+      return null;
+    }
+
+    const existing = this.heap.get(address);
+    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+      return existing;
+    }
+
+    const created = {};
+    this.heap.set(address, created);
+    return created;
+  }
+
+  resolveMemberContainer(target) {
+    if (!target) return null;
+
+    if (target.type === 'PtrMember') {
+      const address = this.evaluate(target.object);
+      return this.ensureHeapObject(address);
+    }
+
+    if (target.type === 'Member') {
+      if (target.object?.type === 'Identifier') {
+        const current = this.getVar(target.object.name);
+        if (current && typeof current === 'object' && !Array.isArray(current)) {
+          return current;
+        }
+
+        const created = {};
+        this.setVar(target.object.name, created);
+        return created;
+      }
+
+      const value = this.evaluate(target.object);
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
   execute(node) {
     if (!node) return undefined;
 
@@ -1077,6 +1193,9 @@ class Interpreter {
         }
       }
 
+      case 'Cast':
+        return this.evaluate(node.operand);
+
       case 'Assignment': {
         const right = this.evaluate(node.right);
         if (node.left.type === 'Identifier') {
@@ -1103,6 +1222,13 @@ class Interpreter {
           }
           return right;
         }
+        if (node.left.type === 'Member' || node.left.type === 'PtrMember') {
+          const container = this.resolveMemberContainer(node.left);
+          if (container) {
+            container[node.left.member] = right;
+          }
+          return right;
+        }
         return right;
       }
 
@@ -1115,10 +1241,35 @@ class Interpreter {
         return 0;
       }
 
+      case 'Member': {
+        const container = this.resolveMemberContainer(node);
+        return container ? (container[node.member] ?? 0) : 0;
+      }
+
+      case 'PtrMember': {
+        const container = this.resolveMemberContainer(node);
+        return container ? (container[node.member] ?? 0) : 0;
+      }
+
       case 'Call': {
         const funcName = node.callee.name;
         
         // Built-in functions
+        if (funcName === 'malloc' || funcName === 'calloc') {
+          const address = this.nextHeapAddr;
+          this.nextHeapAddr += 8;
+          this.heap.set(address, {});
+          return address;
+        }
+
+        if (funcName === 'free') {
+          const address = node.args[0] ? this.evaluate(node.args[0]) : 0;
+          if (address) {
+            this.heap.delete(address);
+          }
+          return 0;
+        }
+
         if (funcName === 'printf') {
           const fmt = node.args[0] ? this.evaluate(node.args[0]) : '';
           const args = node.args.slice(1).map(a => this.evaluate(a));

@@ -717,6 +717,10 @@ function pickRecommendations(primaryIntent: ProgramIntentType, fallbackIntent: P
   return picked;
 }
 
+export function getPracticeRecommendationsForIntent(intent: ProgramIntentType): PracticeRecommendation[] {
+  return [...(PROBLEM_BANK[intent] ?? PROBLEM_BANK.generic)];
+}
+
 const COMPLEXITY_ORDER: Record<string, number> = {
   'O(1)': 1,
   'O(log n)': 2,

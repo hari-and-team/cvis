@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { COMPILATION_LIMITS, REQUEST_LIMITS } from '../config/constants.js';
+import { getManagedBinaryPath } from './binary-artifacts.js';
 import { getGccPath } from './gcc-path.js';
 
 const execFileAsync = promisify(execFile);
@@ -38,7 +39,7 @@ export async function compileC(code) {
   const tmpDir = os.tmpdir();
   const jobId = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   const srcFile = path.join(tmpDir, `code_${jobId}.c`);
-  const binFile = path.join(tmpDir, `code_${jobId}.out`);
+  const binFile = getManagedBinaryPath(tmpDir, jobId);
 
   try {
     await fs.writeFile(srcFile, code, 'utf8');
@@ -67,7 +68,7 @@ export async function compileC(code) {
       return {
         success: true,
         binary: binFile,
-        output: `Compiled successfully to ${binFile}`,
+        output: splitCompilerOutput(stderr).length > 0 ? 'Compiled with warnings' : 'Compiled successfully',
         errors: [],
         warnings: splitCompilerOutput(stderr),
         compilationTime

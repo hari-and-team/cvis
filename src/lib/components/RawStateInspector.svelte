@@ -4,9 +4,8 @@
     VisualizerMemoryEntry
   } from '$lib/visualizer/trace-normalization';
 
-  export let title = 'Raw Runtime State';
+  export let title = 'Program State';
   export let reason: string | null = null;
-  export let registers: Record<string, number> = {};
   export let globalFrame: VisualizerFrame | null = null;
   export let stackFrames: VisualizerFrame[] = [];
   export let memoryEntries: VisualizerMemoryEntry[] = [];
@@ -36,23 +35,7 @@
 
   <div class="raw-grid">
     <article class="raw-card">
-      <div class="raw-card-title">Registers</div>
-      {#if Object.keys(registers).length > 0}
-        <div class="kv-list">
-          {#each Object.entries(registers) as [key, value]}
-            <div class="kv-row">
-              <span class="kv-key">{key}</span>
-              <span class="kv-value">{value}</span>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="raw-empty">No register state</div>
-      {/if}
-    </article>
-
-    <article class="raw-card">
-      <div class="raw-card-title">Call Stack</div>
+      <div class="raw-card-title">Functions</div>
       {#if stackFrames.length > 0}
         <div class="frame-list">
           {#each stackFrames as frame}
@@ -79,7 +62,7 @@
     </article>
 
     <article class="raw-card">
-      <div class="raw-card-title">Global Scope</div>
+      <div class="raw-card-title">Variables</div>
       {#if globalFrame && Object.keys(globalFrame.locals).length > 0}
         <div class="kv-list">
           {#each Object.entries(globalFrame.locals) as [key, value]}
@@ -96,7 +79,7 @@
   </div>
 
   <article class="raw-card raw-memory-card">
-    <div class="raw-card-title">Memory</div>
+    <div class="raw-card-title">Extra State</div>
     {#if memoryEntries.length > 0}
       <div class="memory-list">
         {#each memoryEntries as entry}

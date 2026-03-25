@@ -34,8 +34,11 @@
   import { predictProgramIntent } from '$lib/visualizer/program-intent';
   import {
     analyzeCodeType,
+    getPracticeRecommendationsForIntent,
     type PracticeRecommendation
   } from '$lib/analysis/code-type-finder';
+  import { analyzeDynamicBehavior } from '$lib/analysis/dynamic-analysis';
+  import { analyzeReverse } from '$lib/analysis/reverse-analysis';
   import {
     interruptRuntimeSession,
     sendRuntimeEof,
@@ -115,6 +118,8 @@
   $: hasCapturedRunInput = $lastRunInputTranscript.length > 0;
   $: intentPrediction = predictProgramIntent($editorCode);
   $: analysisReport = analyzeCodeType($editorCode);
+  $: dynamicAnalysisReport = analyzeDynamicBehavior($editorCode, traceSteps);
+  $: reverseAnalysisReport = analyzeReverse($editorCode, analysisReport);
   $: programLineCount = Math.max($editorCode.split('\n').length, 1);
   $: detectedSections = getDetectedSections();
   $: detectedDsaCards = buildDetectedDsaCards();
@@ -123,8 +128,15 @@
   $: hasDetectedAlgorithms = detectedAlgorithmCards.length > 0;
   $: dominantAnalysisSection = pickDominantSection();
   $: mainAnalysisSection =
-    analysisReport.sections.find((section) => section.title === 'main') ?? null;
-  $: recommendedProblems = analysisReport.recommendations.slice(0, 4);
+    analysisReport.sections.find((section) => {
+      const title = section.title.trim().toLowerCase();
+      return title === 'main' || title === 'main()';
+    }) ?? null;
+  $: recommendedProblems = getRecommendedProblems();
+  $: reverseRiskCount = reverseAnalysisReport.safetyFindings.filter((finding) => finding.severity === 'risk').length;
+  $: reverseOptimizationCount = reverseAnalysisReport.optimizationFindings.filter(
+    (finding) => finding.severity !== 'info'
+  ).length;
   $: personalizedMentorQueue = buildPersonalizedMentorQueue(recommendedProblems);
   $: guidedMentorSelection = personalizedMentorQueue[0] ?? null;
   $: if (recommendedProblems.length === 0 && $selectedPracticeProblemId !== null) {
@@ -225,6 +237,14 @@
       : 'optional';
 
   $: hasError = Boolean($lastExecutionResult?.stderr || $lastCompileResult?.errors?.length);
+  $: compileSummary = $lastCompileResult
+    ? `Compile ${formatDuration($lastCompileResult.compilationTime)}`
+    : null;
+  $: runSummary = $lastExecutionResult
+    ? `Runtime ${formatDuration($lastExecutionResult.executionTime)}${
+        $lastExecutionResult.peakMemoryBytes ? ` · Memory ${formatMemory($lastExecutionResult.peakMemoryBytes)}` : ''
+      }`
+    : null;
   $: clampedTraceStepIndex =
     traceSteps.length === 0 ? 0 : Math.min(Math.max(currentStep, 0), traceSteps.length - 1);
   $: currentTraceStepData = traceSteps[clampedTraceStepIndex] || null;
@@ -452,12 +472,72 @@
       .join(' ');
   }
 
+  function formatDuration(ms: number | null | undefined): string {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) return '—';
+    if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
+    return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)} s`;
+  }
+
+  function formatMemory(bytes: number | null | undefined): string {
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '—';
+    const mb = bytes / (1024 * 1024);
+    return `${mb >= 100 ? Math.round(mb) : mb.toFixed(mb >= 10 ? 1 : 2)} MB`;
+  }
+
   function formatEvidenceLabel(value: string): string {
     return value
       .replace(/[_-]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
       .replace(/^./, (first) => first.toUpperCase());
+  }
+
+  function getDynamicIntentFallback(primaryType: string | null): string | null {
+    if (primaryType === 'Stack') return 'stack';
+    if (primaryType === 'Queue') return 'queue';
+    if (primaryType === 'Tree / BST') return 'tree';
+    if (primaryType === 'Recursion') return 'recursion';
+    return null;
+  }
+
+  function getRecommendedProblems(): PracticeRecommendation[] {
+    const staticRecommendations = analysisReport.recommendations.slice(0, 4);
+    const hasStrongStaticRead =
+      analysisReport.primaryIntent !== 'generic' || hasDetectedDsa || hasDetectedAlgorithms;
+    const dynamicIntent = getDynamicIntentFallback(dynamicAnalysisReport.primaryType);
+
+    if (!hasStrongStaticRead && dynamicIntent && dynamicAnalysisReport.confidence >= 0.55) {
+      return getPracticeRecommendationsForIntent(dynamicIntent as
+        | 'stack'
+        | 'queue'
+        | 'tree'
+        | 'recursion').slice(0, 4);
+    }
+
+    return staticRecommendations;
+  }
+
+  function reviewToneLabel(value: 'keep' | 'review' | 'refactor'): string {
+    if (value === 'keep') return 'Keep';
+    if (value === 'review') return 'Review';
+    return 'Refactor';
+  }
+
+  function findingSeverityLabel(value: 'info' | 'watch' | 'risk'): string {
+    if (value === 'info') return 'Info';
+    if (value === 'watch') return 'Watch';
+    return 'Risk';
+  }
+
+  function analysisSourceLabel(
+    source: AnalyzeIntentResult['source'],
+    engine?: AnalyzeIntentResult['engine']
+  ): string {
+    if (source === 'ai' && engine?.startsWith('ollama:')) return 'Ollama semantic read';
+    if (source === 'ai' && engine?.startsWith('openai:')) return 'AI semantic read';
+    if (source === 'ai') return 'AI semantic read';
+    if (source === 'heuristic-fallback') return 'Heuristic fallback';
+    return 'Local classifier';
   }
 
   function getDetectedSections() {
@@ -885,6 +965,16 @@
   <div class="content-area">
     {#if $rightPaneTab === 'console'}
       <div class="output-panel terminal-panel">
+        {#if runSummary || compileSummary}
+          <div class="console-stats">
+            {#if runSummary}
+              <span class="console-stat-pill console-stat-pill-run">{runSummary}</span>
+            {/if}
+            {#if compileSummary}
+              <span class="console-stat-pill">{compileSummary}</span>
+            {/if}
+          </div>
+        {/if}
         <div
           bind:this={outputRef}
           class="output-content terminal-output"
@@ -987,7 +1077,7 @@
                 <div class="error-title">Interpreter Error</div>
                 <pre class="error-message">{traceErr}</pre>
                 <div class="error-hint">
-                  Use compile plus run for exact output from complex programs.
+                  Compile + Run remains the source of truth if the visual trace hits an unsupported C feature.
                 </div>
               </div>
             </div>
@@ -1032,8 +1122,8 @@
                 <div class="analysis-summary-copy">
                   <div class="analysis-primary-label">{analysisReport.primaryLabel}</div>
                   <div class="analysis-summary-text">
-                    The analyzer is most confident about this shape of code, then layers section-level
-                    complexity and practice guidance on top.
+                    Start with what the code appears to be, then review why each section exists,
+                    where risk lives, and what is worth tightening next.
                   </div>
                   {#if dominantAnalysisSection}
                     <div class="analysis-summary-hint">
@@ -1046,7 +1136,7 @@
                 </div>
                 <div class="analysis-summary-metrics">
                   <div class="analysis-metric-card">
-                    <span class="analysis-metric-label">Detected</span>
+                    <span class="analysis-metric-label">Signals</span>
                     <span class="analysis-metric-value">
                       {detectedDsaCards.length + detectedAlgorithmCards.length}
                     </span>
@@ -1056,8 +1146,8 @@
                     <span class="analysis-metric-value">{analysisReport.sections.length}</span>
                   </div>
                   <div class="analysis-metric-card">
-                    <span class="analysis-metric-label">Picks</span>
-                    <span class="analysis-metric-value">{recommendedProblems.length}</span>
+                    <span class="analysis-metric-label">Risks</span>
+                    <span class="analysis-metric-value">{reverseRiskCount}</span>
                   </div>
                 </div>
               </div>
@@ -1072,67 +1162,62 @@
             </section>
           {/if}
 
-          {#if hasDetectedDsa}
+          {#if hasDetectedDsa || hasDetectedAlgorithms}
             <section class="analysis-card">
               <div class="analysis-header">
-                <span class="analysis-title">Detected Structures</span>
-                <span class="analysis-meta">{detectedDsaCards.length} found</span>
+                <span class="analysis-title">Code Identity</span>
+                <span class="analysis-meta">{analysisReport.primaryLabel}</span>
               </div>
-              <div class="section-list">
-                {#each detectedDsaCards as card}
-                  <article class="section-item">
-                    <div class="section-top">
-                      <span class="section-name">{card.label}</span>
-                      <span class="section-confidence">{Math.round(card.confidence * 100)}%</span>
-                    </div>
-                    {#if card.locations.length > 0}
-                      <div class="analysis-subtitle">{card.locations.join(' · ')}</div>
-                    {/if}
-                    <div class="analysis-evidence-label">Why this matched</div>
-                    {#if card.signals.length > 0}
-                      <div class="analysis-signal-row">
-                        {#each card.signals.slice(0, 5) as signal}
-                          <span class="analysis-signal analysis-signal-muted">
-                            {formatEvidenceLabel(signal)}
-                          </span>
-                        {/each}
+              {#if hasDetectedDsa}
+                <div class="analysis-evidence-label">Structures</div>
+                <div class="section-list">
+                  {#each detectedDsaCards as card}
+                    <article class="section-item">
+                      <div class="section-top">
+                        <span class="section-name">{card.label}</span>
+                        <span class="section-confidence">{Math.round(card.confidence * 100)}%</span>
                       </div>
-                    {/if}
-                  </article>
-                {/each}
-              </div>
-            </section>
-          {/if}
-
-          {#if hasDetectedAlgorithms}
-            <section class="analysis-card">
-              <div class="analysis-header">
-                <span class="analysis-title">Technique Signals</span>
-                <span class="analysis-meta">{detectedAlgorithmCards.length} found</span>
-              </div>
-              <div class="section-list">
-                {#each detectedAlgorithmCards as card}
-                  <article class="section-item">
-                    <div class="section-top">
-                      <span class="section-name">{card.label}</span>
-                      <span class="section-confidence">{Math.round(card.confidence * 100)}%</span>
-                    </div>
-                    {#if card.locations.length > 0}
-                      <div class="analysis-subtitle">{card.locations.join(' · ')}</div>
-                    {/if}
-                    <div class="analysis-evidence-label">Why this technique was detected</div>
-                    {#if card.signals.length > 0}
-                      <div class="analysis-signal-row">
-                        {#each card.signals.slice(0, 5) as signal}
-                          <span class="analysis-signal analysis-signal-muted">
-                            {formatEvidenceLabel(signal)}
-                          </span>
-                        {/each}
+                      {#if card.locations.length > 0}
+                        <div class="analysis-subtitle">{card.locations.join(' · ')}</div>
+                      {/if}
+                      {#if card.signals.length > 0}
+                        <div class="analysis-signal-row">
+                          {#each card.signals.slice(0, 4) as signal}
+                            <span class="analysis-signal analysis-signal-muted">
+                              {formatEvidenceLabel(signal)}
+                            </span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+              {#if hasDetectedAlgorithms}
+                <div class="analysis-evidence-label">Techniques</div>
+                <div class="section-list">
+                  {#each detectedAlgorithmCards as card}
+                    <article class="section-item">
+                      <div class="section-top">
+                        <span class="section-name">{card.label}</span>
+                        <span class="section-confidence">{Math.round(card.confidence * 100)}%</span>
                       </div>
-                    {/if}
-                  </article>
-                {/each}
-              </div>
+                      {#if card.locations.length > 0}
+                        <div class="analysis-subtitle">{card.locations.join(' · ')}</div>
+                      {/if}
+                      {#if card.signals.length > 0}
+                        <div class="analysis-signal-row">
+                          {#each card.signals.slice(0, 4) as signal}
+                            <span class="analysis-signal analysis-signal-muted">
+                              {formatEvidenceLabel(signal)}
+                            </span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </article>
+                  {/each}
+                </div>
+              {/if}
             </section>
           {/if}
 
@@ -1209,15 +1294,149 @@
             </section>
           {/if}
 
+          <section class="analysis-card">
+            <div class="analysis-header">
+              <span class="analysis-title">Dynamic Analysis</span>
+              <span class="analysis-meta">
+                {#if dynamicAnalysisReport.hasTrace}
+                  {dynamicAnalysisReport.stepCount} trace steps
+                {:else}
+                  trace required
+                {/if}
+              </span>
+            </div>
+
+            {#if dynamicAnalysisReport.hasTrace}
+              <div class="analysis-primary-label">
+                {dynamicAnalysisReport.primaryType ?? 'No strong runtime type yet'}
+              </div>
+              <div class="analysis-summary-text">{dynamicAnalysisReport.summary}</div>
+
+              <div class="complexity-grid">
+                <div class="complexity-card">
+                  <span class="complexity-label">Observed Type</span>
+                  <span class="complexity-value">{dynamicAnalysisReport.primaryType ?? 'Pending'}</span>
+                </div>
+                <div class="complexity-card">
+                  <span class="complexity-label">Implementation</span>
+                  <span class="complexity-value">{dynamicAnalysisReport.implementationStyle ?? 'Needs more coverage'}</span>
+                </div>
+                <div class="complexity-card">
+                  <span class="complexity-label">Runtime Pattern</span>
+                  <span class="complexity-value">{dynamicAnalysisReport.accessPattern ?? 'Undetermined'}</span>
+                </div>
+                <div class="complexity-card">
+                  <span class="complexity-label">Coverage</span>
+                  <span class="complexity-value">
+                    {dynamicAnalysisReport.executedLineCount} lines · depth {dynamicAnalysisReport.maxCallDepth}
+                  </span>
+                </div>
+              </div>
+
+              {#if dynamicAnalysisReport.signals.length > 0}
+                <div class="analysis-evidence-label">Runtime evidence</div>
+                <div class="analysis-signal-row">
+                  {#each dynamicAnalysisReport.signals as signal}
+                    <span class="analysis-signal analysis-signal-strong">{signal}</span>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if dynamicAnalysisReport.observations.length > 0}
+                <div class="analysis-notes">
+                  {#each dynamicAnalysisReport.observations as observation}
+                    <div class="analysis-note">{observation}</div>
+                  {/each}
+                </div>
+              {/if}
+            {:else}
+              <div class="analysis-empty-copy">
+                Trace the code once to let the app classify what the program actually does at runtime, even when names like `push`, `pop`, or `top` are not used.
+              </div>
+            {/if}
+          </section>
+
+          <section class="analysis-card">
+            <div class="analysis-header">
+              <span class="analysis-title">Reverse Review</span>
+              <span class="analysis-meta">{reverseAnalysisReport.sectionReviews.length} sections</span>
+            </div>
+            <div class="section-list">
+              {#each reverseAnalysisReport.sectionReviews as sectionReview}
+                <article class="section-item">
+                  <div class="section-top">
+                    <span class="section-name">{sectionReview.title}</span>
+                    <span class="analysis-badge analysis-badge-{sectionReview.verdict}">
+                      {reviewToneLabel(sectionReview.verdict)}
+                    </span>
+                  </div>
+                  <div class="analysis-subtitle">{sectionReview.location}</div>
+                  <div class="analysis-summary-text">{sectionReview.purpose}</div>
+                  <div class="analysis-summary-hint analysis-summary-hint-block">
+                    {sectionReview.recommendation}
+                  </div>
+                </article>
+              {/each}
+            </div>
+          </section>
+
+          <section class="analysis-card">
+            <div class="analysis-header">
+              <span class="analysis-title">Safety Review</span>
+              <span class="analysis-meta">{reverseRiskCount} high-risk</span>
+            </div>
+            <div class="section-list">
+              {#each reverseAnalysisReport.safetyFindings as finding}
+                <article class="section-item">
+                  <div class="section-top">
+                    <span class="section-name">{finding.title}</span>
+                    <span class="analysis-badge analysis-badge-{finding.severity}">
+                      {findingSeverityLabel(finding.severity)}
+                    </span>
+                  </div>
+                  <div class="analysis-summary-text">{finding.detail}</div>
+                  <div class="analysis-summary-hint analysis-summary-hint-block">
+                    {finding.recommendation}
+                  </div>
+                </article>
+              {/each}
+            </div>
+          </section>
+
+          <section class="analysis-card">
+            <div class="analysis-header">
+              <span class="analysis-title">Optimization Opportunities</span>
+              <span class="analysis-meta">{reverseOptimizationCount} active</span>
+            </div>
+            <div class="section-list">
+              {#each reverseAnalysisReport.optimizationFindings as finding}
+                <article class="section-item">
+                  <div class="section-top">
+                    <span class="section-name">{finding.title}</span>
+                    <span class="analysis-badge analysis-badge-{finding.severity}">
+                      {findingSeverityLabel(finding.severity)}
+                    </span>
+                  </div>
+                  <div class="analysis-summary-text">{finding.detail}</div>
+                  <div class="analysis-summary-hint analysis-summary-hint-block">
+                    {finding.recommendation}
+                  </div>
+                </article>
+              {/each}
+            </div>
+          </section>
+
           {#if aiIntentLoading || aiIntentResult || aiIntentError}
             <section class="analysis-card">
               <div class="analysis-header">
-                <span class="analysis-title">AI Code Identification</span>
+                <span class="analysis-title">Code Identification</span>
                 <span class="analysis-meta">
                   {#if aiIntentLoading}
                     analyzing...
+                  {:else if aiIntentResult}
+                    {analysisSourceLabel(aiIntentResult.source, aiIntentResult.engine)} · {Math.round((aiIntentResult.confidence ?? 0) * 100)}%
                   {:else}
-                    {Math.round((aiIntentResult?.confidence ?? 0) * 100)}% confidence
+                    unavailable
                   {/if}
                 </span>
               </div>
@@ -1234,19 +1453,43 @@
                   <div class="analysis-summary-text">{aiIntentResult.summary}</div>
                 {/if}
                 <div class="analysis-summary-hint">
-                  engine: {aiIntentResult.engine} · intent: {formatEvidenceLabel(aiIntentResult.primaryIntent)}
+                  time: {analysisReport.overallTimeComplexity} · space: {analysisReport.overallSpaceComplexity}
+                  {#if mainAnalysisSection}
+                    · main(): {mainAnalysisSection.estimatedTimeComplexity} / {mainAnalysisSection.estimatedSpaceComplexity}
+                  {/if}
                 </div>
                 {#if aiIntentResult.explanation && aiIntentResult.explanation.length > 0}
                   <div class="analysis-notes">
-                    {#each aiIntentResult.explanation as explanation}
+                    {#each aiIntentResult.explanation.slice(0, 2) as explanation}
                       <div class="analysis-note">{explanation}</div>
+                    {/each}
+                  </div>
+                {/if}
+                {#if aiIntentResult.sectionPurposes && aiIntentResult.sectionPurposes.length > 0}
+                  <div class="analysis-evidence-label">Section read</div>
+                  <div class="section-list">
+                    {#each aiIntentResult.sectionPurposes.slice(0, 3) as sectionPurpose}
+                      <article class="section-item">
+                        <div class="section-top">
+                          <span class="section-name">{sectionPurpose.title}</span>
+                        </div>
+                        <div class="analysis-summary-text">{sectionPurpose.purpose}</div>
+                      </article>
+                    {/each}
+                  </div>
+                {/if}
+                {#if aiIntentResult.optimizationIdeas && aiIntentResult.optimizationIdeas.length > 0}
+                  <div class="analysis-evidence-label">AI improvement ideas</div>
+                  <div class="analysis-notes">
+                    {#each aiIntentResult.optimizationIdeas.slice(0, 3) as idea}
+                      <div class="analysis-note">{idea}</div>
                     {/each}
                   </div>
                 {/if}
                 {#if aiIntentResult.candidates && aiIntentResult.candidates.length > 0}
                   <div class="analysis-evidence-label">Top matches</div>
                   <div class="analysis-signal-row">
-                    {#each aiIntentResult.candidates as candidate}
+                    {#each aiIntentResult.candidates.slice(0, 3) as candidate}
                       <span class="analysis-signal">
                         {candidate.label} {Math.round(candidate.confidence * 100)}%
                       </span>
@@ -1680,6 +1923,29 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .console-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .console-stat-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--od-border) 78%, transparent);
+    background: color-mix(in srgb, var(--od-bg-deep) 82%, transparent);
+    color: var(--od-text-bright);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 6px 10px;
+  }
+
+  .console-stat-pill-run {
+    border-color: color-mix(in srgb, var(--od-blue) 28%, var(--od-border));
+    background: color-mix(in srgb, var(--od-blue) 10%, transparent);
   }
 
   .terminal-output {
@@ -2303,6 +2569,38 @@
   .section-confidence {
     color: var(--od-text-dim);
     font-size: 10px;
+  }
+
+  .analysis-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    border: 1px solid transparent;
+  }
+
+  .analysis-badge-keep,
+  .analysis-badge-info {
+    color: var(--od-green);
+    border-color: color-mix(in srgb, var(--od-green) 30%, transparent);
+    background: color-mix(in srgb, var(--od-green) 10%, transparent);
+  }
+
+  .analysis-badge-review,
+  .analysis-badge-watch {
+    color: var(--od-orange);
+    border-color: color-mix(in srgb, var(--od-orange) 30%, transparent);
+    background: color-mix(in srgb, var(--od-orange) 10%, transparent);
+  }
+
+  .analysis-badge-refactor,
+  .analysis-badge-risk {
+    color: var(--od-red);
+    border-color: color-mix(in srgb, var(--od-red) 30%, transparent);
+    background: color-mix(in srgb, var(--od-red) 10%, transparent);
   }
 
   .section-range {

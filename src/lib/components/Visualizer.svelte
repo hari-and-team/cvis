@@ -32,7 +32,6 @@
   $: previousStackFrames = previousNormalizedTrace.stackFrames;
   $: globalFrame = normalizedTrace.globalFrame;
   $: previousGlobalFrame = previousNormalizedTrace.globalFrame;
-  $: registers = normalizedTrace.registers;
   $: memoryEntries = normalizedTrace.memoryEntries;
   $: arrays = buildArrayViews(normalizedTrace.arrays);
   $: linkedLists = normalizedTrace.linkedLists;
@@ -233,7 +232,7 @@
     {#if !traceStep}
       <div class="empty-state">
         <div class="empty-title">Ready to visualize</div>
-        <div class="empty-copy">Run a trace to inspect call stack, globals, arrays, lists, and tree state.</div>
+        <div class="empty-copy">Run a trace to inspect program flow, variables, and data structure behavior.</div>
       </div>
     {:else}
       <section class="trace-nav-card">
@@ -300,10 +299,10 @@
       {#if isPartialSnapshot}
         <section class="viz-section">
           <div class="state-banner">
-            <span class="state-banner-title">Partial runtime snapshot</span>
+            <span class="state-banner-title">Program state snapshot</span>
             <span class="state-banner-copy">
-              This step has runtime state, but there is not enough structured
-              array/list/tree/stack/graph data yet for a richer diagram.
+              This step has useful variables and function state, but not enough recognized structure data yet
+              for a richer animation.
             </span>
           </div>
         </section>
@@ -319,26 +318,9 @@
           {#each intentPrediction.techniques.slice(0, 4) as technique}
             <span class="tag">{formatTechniqueLabel(technique)}</span>
           {/each}
-          <span class="tag subtle">{traceStep.instructionPointer || 'line trace'}</span>
+          <span class="tag subtle">line {traceStep.lineNo ?? '—'}</span>
         </div>
       </section>
-
-      {#if Object.keys(registers).length > 0}
-        <section class="viz-section">
-          <div class="section-header">
-            <span class="section-label">Registers</span>
-            <div class="section-rule"></div>
-          </div>
-          <div class="register-grid">
-            {#each Object.entries(registers) as [register, value]}
-              <div class="register-card">
-                <span class="register-name">{register}</span>
-                <span class="register-value">{value}</span>
-              </div>
-            {/each}
-          </div>
-        </section>
-      {/if}
 
       {#if stackFrames.length > 0}
         <section class="viz-section">
@@ -534,9 +516,8 @@
 
       {#if !hasRenderableSections}
         <RawStateInspector
-          title="Runtime State"
+          title="Program State"
           reason={normalizedTrace.fallbackReason}
-          {registers}
           {globalFrame}
           {stackFrames}
           {memoryEntries}
@@ -875,14 +856,12 @@
     color: color-mix(in srgb, var(--text-mid) 80%, var(--text-dim));
   }
 
-  .register-grid,
   .var-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 8px;
   }
 
-  .register-card,
   .var-card,
   .array-card,
   .frame-card,
@@ -892,14 +871,6 @@
     background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
   }
 
-  .register-card {
-    padding: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .register-name,
   .var-name,
   .array-index {
     color: color-mix(in srgb, var(--text-mid) 80%, var(--text-dim));
@@ -908,7 +879,6 @@
     letter-spacing: 0.08em;
   }
 
-  .register-value,
   .var-value {
     color: var(--text-bright);
     font-size: 14px;

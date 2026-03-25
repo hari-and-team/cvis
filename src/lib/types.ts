@@ -25,6 +25,7 @@ export interface ExecutionResult {
   stderr: string;
   exitCode: number;
   executionTime: number;
+  peakMemoryBytes?: number | null;
 }
 
 export interface RunSessionStartRequest {
@@ -82,6 +83,7 @@ export interface RunSessionPollResult {
   done: boolean;
   exitCode: number | null;
   executionTime: number;
+  peakMemoryBytes?: number | null;
   inputClosed?: boolean;
   timedOut?: boolean;
   outputLimitHit?: boolean;
@@ -140,9 +142,15 @@ export interface AnalyzeIntentCandidate {
   confidence: number;
 }
 
+export interface AnalyzeIntentSectionPurpose {
+  title: string;
+  purpose: string;
+}
+
 export interface AnalyzeIntentResult {
   success: boolean;
   engine: string;
+  source?: 'ai' | 'heuristic' | 'heuristic-fallback';
   primaryIntent: string;
   primaryLabel: string;
   confidence: number;
@@ -150,6 +158,8 @@ export interface AnalyzeIntentResult {
   candidates?: AnalyzeIntentCandidate[];
   summary?: string;
   explanation?: string[];
+  sectionPurposes?: AnalyzeIntentSectionPurpose[];
+  optimizationIdeas?: string[];
   error?: string;
 }
 

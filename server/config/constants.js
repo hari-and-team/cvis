@@ -1,4 +1,6 @@
-export const PORT = 3001;
+const PARSED_PORT = Number.parseInt(process.env.PORT || '3001', 10);
+
+export const PORT = Number.isFinite(PARSED_PORT) ? PARSED_PORT : 3001;
 export const JSON_BODY_LIMIT = '1mb';
 
 export const DEV_CORS_ORIGINS = ['http://localhost:5173', 'http://localhost:4173'];
