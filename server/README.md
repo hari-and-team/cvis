@@ -37,8 +37,6 @@ Docker remains available as a fallback.
 
 ```bash
 npm start
-# or
-node index.js
 ```
 
 The server will start on port 3001 and verify GCC is available.

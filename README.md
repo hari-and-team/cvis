@@ -153,7 +153,7 @@ npm run dev:all
 # OR run them in separate terminals:
 # Terminal 1: Start the backend locally
 npm run backend
-# OR: cd server && node index.js
+# OR: cd server && npm start
 
 # Terminal 2: Start the frontend
 npm run dev

@@ -3,7 +3,7 @@ import globals from 'globals'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', '.svelte-kit', 'build', 'Visualizer/**']),
+  globalIgnores(['dist', '.svelte-kit', 'build', '.cvis-toolchain', 'Visualizer/**']),
   {
     files: ['**/*.{js,mjs,cjs}'],
     extends: [js.configs.recommended],

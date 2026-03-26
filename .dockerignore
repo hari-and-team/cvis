@@ -28,6 +28,10 @@ Thumbs.db
 
 logs/
 *.log
+.backend*.log
+.frontend*.log
+.devall*.log
 tmp/
 temp/
 *.tmp
+.cvis-toolchain/
