@@ -17,6 +17,7 @@ import {
   lastCompileResult,
   lastExecutionResult,
   lastRunInputTranscript,
+  pendingRunInputEcho,
   runConsoleTranscript,
   runSessionId,
   traceSteps
@@ -82,6 +83,116 @@ const RUN_POLL_INTERVAL_MS = 120;
 let activeRunSessionId: string | null = null;
 let activeRunOutputCursor = '';
 let activeRunInputClosed = false;
+let activePendingRunInputEcho = '';
+
+function setPendingRunInputEcho(value: string): void {
+  activePendingRunInputEcho = value;
+  pendingRunInputEcho.set(value);
+}
+
+function appendPendingRunInputEcho(value: string): void {
+  if (!value) {
+    return;
+  }
+
+  setPendingRunInputEcho(`${activePendingRunInputEcho}${value}`);
+}
+
+function trimPendingRunInputEcho(count: number): void {
+  if (count <= 0) {
+    return;
+  }
+
+  setPendingRunInputEcho(activePendingRunInputEcho.slice(count));
+}
+
+function clearPendingRunInputEcho(): void {
+  setPendingRunInputEcho('');
+}
+
+function commonPrefixLength(left: string, right: string): number {
+  const max = Math.min(left.length, right.length);
+  let index = 0;
+
+  while (index < max && left[index] === right[index]) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function findPromptInsertionIndex(text: string): number {
+  const firstNewlineIndex = text.indexOf('\n');
+  const searchLimit = firstNewlineIndex >= 0 ? firstNewlineIndex : text.length;
+  const head = text.slice(0, searchLimit);
+  const promptMarkers = [': ', '? ', '> ', '$ ', '# '];
+  let bestIndex = -1;
+
+  for (const marker of promptMarkers) {
+    const markerIndex = head.indexOf(marker);
+    if (markerIndex < 0) {
+      continue;
+    }
+
+    const insertionIndex = markerIndex + marker.length;
+    if (insertionIndex >= head.length) {
+      continue;
+    }
+
+    if (bestIndex < 0 || insertionIndex < bestIndex) {
+      bestIndex = insertionIndex;
+    }
+  }
+
+  return bestIndex;
+}
+
+function reconcilePendingRunInputEcho(delta: string, pollDone: boolean): string {
+  if (!activePendingRunInputEcho) {
+    return delta;
+  }
+
+  if (!delta) {
+    if (pollDone) {
+      const fallback = activePendingRunInputEcho;
+      clearPendingRunInputEcho();
+      return fallback;
+    }
+
+    return delta;
+  }
+
+  const matchedPrefix = commonPrefixLength(delta, activePendingRunInputEcho);
+  if (matchedPrefix > 0) {
+    trimPendingRunInputEcho(matchedPrefix);
+    return delta;
+  }
+
+  if (delta.includes(activePendingRunInputEcho)) {
+    clearPendingRunInputEcho();
+    return delta;
+  }
+
+  // When stdout is pipe-buffered, prompts can arrive only after stdin has already
+  // been sent. Preserve terminal-like ordering by stitching the pending input
+  // after the first prompt marker in the newly received line.
+  if (!activeRunOutputCursor) {
+    const promptInsertionIndex = findPromptInsertionIndex(delta);
+    if (promptInsertionIndex >= 0) {
+      const latePromptDelta = [
+        delta.slice(0, promptInsertionIndex),
+        activePendingRunInputEcho,
+        delta.slice(promptInsertionIndex)
+      ].join('');
+      clearPendingRunInputEcho();
+      return latePromptDelta;
+    }
+  }
+
+  const optimisticDelta = `${activePendingRunInputEcho}${delta}`;
+  clearPendingRunInputEcho();
+  return optimisticDelta;
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -92,6 +203,7 @@ function delay(ms: number): Promise<void> {
 async function stopActiveRuntimeSession(): Promise<void> {
   if (!activeRunSessionId) {
     runSessionId.set(null);
+    clearPendingRunInputEcho();
     return;
   }
 
@@ -100,6 +212,7 @@ async function stopActiveRuntimeSession(): Promise<void> {
   activeRunInputClosed = false;
   activeRunOutputCursor = '';
   runSessionId.set(null);
+  clearPendingRunInputEcho();
   await stopRunSession(sessionId).catch(() => {});
 }
 
@@ -108,6 +221,7 @@ function resetRuntimeOutputState(): void {
   runSessionId.set(null);
   runConsoleTranscript.set('');
   lastRunInputTranscript.set('');
+  clearPendingRunInputEcho();
   activeRunOutputCursor = '';
   activeRunInputClosed = false;
 }
@@ -200,12 +314,24 @@ export async function runBinaryAction(binaryPath: string | null): Promise<void> 
       const mergedOutput = poll.output ?? `${poll.stdout}${poll.stderr}`;
 
       if (mergedOutput.startsWith(activeRunOutputCursor)) {
-        const delta = mergedOutput.slice(activeRunOutputCursor.length);
+        const rawDelta = mergedOutput.slice(activeRunOutputCursor.length);
+        const delta = reconcilePendingRunInputEcho(rawDelta, Boolean(poll.done));
         if (delta) {
           runConsoleTranscript.update((prev) => `${prev}${delta}`);
         }
       } else if (mergedOutput !== activeRunOutputCursor) {
         runConsoleTranscript.set(mergedOutput);
+        if (activePendingRunInputEcho) {
+          if (mergedOutput.includes(activePendingRunInputEcho)) {
+            clearPendingRunInputEcho();
+          } else if (poll.done) {
+            runConsoleTranscript.update((prev) => `${prev}${activePendingRunInputEcho}`);
+            clearPendingRunInputEcho();
+          }
+        }
+      } else if (poll.done && activePendingRunInputEcho) {
+        runConsoleTranscript.update((prev) => `${prev}${activePendingRunInputEcho}`);
+        clearPendingRunInputEcho();
       }
       activeRunOutputCursor = mergedOutput;
 
@@ -222,6 +348,7 @@ export async function runBinaryAction(binaryPath: string | null): Promise<void> 
         activeRunInputClosed = Boolean(poll.inputClosed);
         activeRunOutputCursor = '';
         runSessionId.set(null);
+        clearPendingRunInputEcho();
         if (poll.completionReason !== 'stopped' && (poll.exitCode ?? 1) !== 0 && poll.stderr) {
           errorMessage.set(poll.stderr);
         }
@@ -243,6 +370,7 @@ export async function runBinaryAction(binaryPath: string | null): Promise<void> 
       activeRunInputClosed = false;
       activeRunOutputCursor = '';
       runSessionId.set(null);
+      clearPendingRunInputEcho();
     }
   } finally {
     isRunning.set(false);
@@ -260,10 +388,16 @@ export async function sendRuntimeInputLine(line: string): Promise<void> {
   }
 
   const payload = line.endsWith('\n') ? line : `${line}\n`;
-  await sendRunInput({
-    sessionId,
-    input: payload
-  });
+  appendPendingRunInputEcho(payload);
+  try {
+    await sendRunInput({
+      sessionId,
+      input: payload
+    });
+  } catch (err) {
+    trimPendingRunInputEcho(payload.length);
+    throw err;
+  }
   lastRunInputTranscript.update((current) => `${current}${payload}`);
 }
 
@@ -291,6 +425,7 @@ export async function interruptRuntimeSession(): Promise<void> {
   activeRunInputClosed = false;
   activeRunOutputCursor = '';
   runSessionId.set(null);
+  clearPendingRunInputEcho();
   lastExecutionResult.update((current) =>
     current
       ? {

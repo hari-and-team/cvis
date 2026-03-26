@@ -1,0 +1,52 @@
+
+> compiler@0.0.0 dev:all
+> node scripts/dev-all.mjs
+
+ℹ️ Using system compiler fallback for now.
+ℹ️ Recommended teammate-safe setup: `npm run setup:toolchain`
+ℹ️ Starting backend and frontend together.
+
+> compiler@0.0.0 dev:stack
+> concurrently -k -n backend,frontend -c green,blue "npm:backend" "npm:dev"
+
+[backend] 
+[backend] > compiler@0.0.0 backend
+[backend] > node server/index.js
+[backend] 
+[frontend] 
+[frontend] > compiler@0.0.0 dev
+[frontend] > vite dev
+[frontend] 
+[backend] Checking GCC availability...
+[backend] ✓ GCC found at: C:\MinGW\bin\gcc.exe
+[backend] ✓ GCC source: system
+[backend] 
+[backend] ═══════════════════════════════════════════════
+[backend]   C DSA Visualizer Backend Server
+[backend] ═══════════════════════════════════════════════
+[backend]   Status:      Running
+[backend]   Environment: Local
+[backend]   Port:        3001
+[backend]   Host:        localhost
+[backend]   GCC:         C:\MinGW\bin\gcc.exe
+[backend]   GCC Source:  system
+[backend]   GCC Version: gcc.exe (MinGW.org GCC-6.3.0-1) 6.3.0
+[backend] 
+[backend]   Endpoints:
+[backend]     POST /api/compile - Compile C code
+[backend]     POST /api/run     - Execute binary
+[backend]     POST /api/trace   - Trace execution
+[backend]     GET  /health      - Health check
+[backend] ═══════════════════════════════════════════════
+[backend] 
+[frontend] Re-optimizing dependencies because lockfile has changed
+[frontend] 
+[frontend]   [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m2086[22m[2m[0m ms[22m
+[frontend] 
+[frontend]   [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+[frontend]   [32m➜[39m  [1mNetwork[22m: [36mhttp://10.29.33.223:[1m5173[22m/[39m
+[backend] [2026-03-25T10:57:11.489Z] GET /health
+[backend] [2026-03-25T10:59:02.997Z] GET /health
+[frontend] [2m4:29:05 pm[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2m.svelte-kit/generated/server/internal.js[22m
+[frontend] [2m4:29:05 pm[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.js[22m
+[frontend] [2m4:29:05 pm[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2m.svelte-kit/generated/root.svelte[22m

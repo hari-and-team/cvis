@@ -26,6 +26,7 @@
 
   let isTracing = false;
   let traceErr: string | null = null;
+  let traceNotice: string | null = null;
   let persistenceReady = false;
   let persistTimer: number | null = null;
   let lastEditorCodeSnapshot = '';
@@ -321,6 +322,7 @@
     lastBinaryPath.set(null);
     lastRunInputTranscript.set('');
     traceErr = null;
+    traceNotice = null;
   }
 
   function resetTraceUiState() {
@@ -328,6 +330,7 @@
     currentStepIndex.set(0);
     isPlaying.set(false);
     traceErr = null;
+    traceNotice = null;
   }
 
   async function handleCompile() {
@@ -354,6 +357,7 @@
     if (!browser) return;
 
     traceErr = null;
+    traceNotice = null;
     isPlaying.set(false);
     rightPaneTab.set('visualizer');
 
@@ -361,7 +365,7 @@
     const traceInput = $lastRunInputTranscript;
 
     if (requiresRuntimeReplay && traceInput.length === 0) {
-      traceErr = 'Run the program once in the Console and enter stdin there before tracing scanf()-based code.';
+      traceNotice = 'This program uses scanf(). Run it once in the Console, enter stdin there, then retrace to reuse that exact input.';
       traceSteps.set([]);
       currentStepIndex.set(0);
       return;
@@ -431,6 +435,7 @@
       currentStep={$currentStepIndex}
       {isTracing}
       {traceErr}
+      {traceNotice}
     />
   </div>
   <slot />

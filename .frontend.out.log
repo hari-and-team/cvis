@@ -1,0 +1,14 @@
+
+> compiler@0.0.0 dev
+> vite dev
+
+Forced re-optimization of dependencies
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m1742[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://10.29.33.223:[1m5173[22m/[39m
+[2m4:05:18 pm[22m [36m[1m[vite][22m[39m [32m✨ new dependencies optimized: [33mlucide-svelte[32m[39m
+[2m4:05:18 pm[22m [36m[1m[vite][22m[39m [32m✨ optimized dependencies changed. reloading[39m
+[2m4:20:56 pm[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2mscripts/dev-all.mjs[22m
+[2m4:20:56 pm[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2mscripts/dev-all.mjs[22m

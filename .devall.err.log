@@ -1,0 +1,15 @@
+node:internal/child_process:421
+    throw new ErrnoException(err, 'spawn');
+          ^
+
+Error: spawn EINVAL
+    at ChildProcess.spawn (node:internal/child_process:421:11)
+    at spawn (node:child_process:796:9)
+    at runNpmScript (file:///D:/cvis/scripts/dev-all.mjs:43:17)
+    at file:///D:/cvis/scripts/dev-all.mjs:116:3 {
+  errno: -4071,
+  code: 'EINVAL',
+  syscall: 'spawn'
+}
+
+Node.js v24.13.1

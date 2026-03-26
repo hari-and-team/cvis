@@ -24,6 +24,7 @@
     lastRunInputTranscript,
     milestoneProgress,
     mentorSelectionMode,
+    pendingRunInputEcho,
     rightPaneTab,
     runConsoleTranscript,
     runSessionId,
@@ -51,6 +52,7 @@
   export let currentStep: number = 0;
   export let isTracing = false;
   export let traceErr: string | null = null;
+  export let traceNotice: string | null = null;
   const TRACE_LOADING_TICK_MS = 850;
   const dispatch = createEventDispatcher<{
     trace: void;
@@ -220,10 +222,10 @@
     ? $runConsoleTranscript
     : $lastExecutionResult
       ? $lastExecutionResult.stdout + $lastExecutionResult.stderr
-    : $lastCompileResult
+      : $lastCompileResult
       ? $lastCompileResult.output || $lastCompileResult.errors.join('\n')
       : '';
-  $: renderedOutput = `${output}${canSendToStdin ? terminalInputBuffer : ''}`;
+  $: renderedOutput = `${output}${$pendingRunInputEcho}${canSendToStdin ? terminalInputBuffer : ''}`;
   $: traceConsoleOutput = renderedOutput || output;
   $: capturedRunInputLineCount = $lastRunInputTranscript.length === 0
     ? 0
@@ -985,7 +987,7 @@
           on:keydown={handleTerminalKeydown}
           on:paste={handleTerminalPaste}
         >
-          {#if output}
+          {#if renderedOutput}
             <pre class="output-text" class:error-output={hasError}>{renderedOutput}{#if canSendToStdin}<span class="terminal-caret"></span>{/if}</pre>
           {:else if canSendToStdin}
             <pre class="output-text">{terminalInputBuffer}<span class="terminal-caret"></span></pre>
@@ -1066,6 +1068,19 @@
                 ({Math.round(intentPrediction.confidence * 100)}%)
               </span>
               <span class="loading-step">{loadingSteps[loadingStepIndex]}</span>
+            </div>
+          {:else if traceNotice}
+            <div class="error-state">
+              <div class="error-card error-card-notice">
+                <div class="error-icon-wrapper error-icon-wrapper-notice">
+                  <AlertTriangle size={24} />
+                </div>
+                <div class="error-title">Runtime Input Needed</div>
+                <pre class="error-message">{traceNotice}</pre>
+                <div class="error-hint">
+                  Compile + Run stays in sync with the real program while Trace waits for captured stdin.
+                </div>
+              </div>
             </div>
           {:else if traceErr}
             <div class="error-state">
@@ -2221,6 +2236,16 @@
     background: color-mix(in srgb, var(--od-red) 15%, var(--od-bg-deep));
     color: var(--od-red);
     margin-bottom: 12px;
+  }
+
+  .error-card-notice {
+    background: color-mix(in srgb, var(--od-orange) 10%, var(--od-bg-deep));
+    border-color: color-mix(in srgb, var(--od-orange) 34%, var(--od-border));
+  }
+
+  .error-icon-wrapper-notice {
+    background: color-mix(in srgb, var(--od-orange) 16%, var(--od-bg-deep));
+    color: var(--od-orange);
   }
 
   .error-title {

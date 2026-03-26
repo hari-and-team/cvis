@@ -23,6 +23,7 @@ export const errorMessage = writable<string | null>(null);
 export const runSessionId = writable<string | null>(null);
 export const runConsoleTranscript = writable<string>('');
 export const lastRunInputTranscript = writable<string>('');
+export const pendingRunInputEcho = writable<string>('');
 export type WorkspaceRightPaneTab = 'console' | 'visualizer' | 'analysis' | 'mentor';
 export const rightPaneTab = writable<WorkspaceRightPaneTab>('visualizer');
 

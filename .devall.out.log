@@ -1,0 +1,7 @@
+
+> compiler@0.0.0 dev:all
+> node scripts/dev-all.mjs
+
+ℹ️ Using system compiler fallback for now.
+ℹ️ Recommended teammate-safe setup: `npm run setup:toolchain`
+ℹ️ Starting backend and frontend together.

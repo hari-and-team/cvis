@@ -39,10 +39,24 @@ export async function compileC(code) {
   const tmpDir = os.tmpdir();
   const jobId = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   const srcFile = path.join(tmpDir, `code_${jobId}.c`);
+  const ioShimFile = path.join(tmpDir, `code_${jobId}_stdio_shim.c`);
   const binFile = getManagedBinaryPath(tmpDir, jobId);
+  const ioShimSource = [
+    '#include <stdio.h>',
+    '',
+    '// Force prompt-friendly stdio so interactive programs behave like a real',
+    '// terminal session even when the app captures output through pipes.',
+    'static void cvis_unbuffer_stdio(void) __attribute__((constructor));',
+    'static void cvis_unbuffer_stdio(void) {',
+    '  setvbuf(stdout, NULL, _IONBF, 0);',
+    '  setvbuf(stderr, NULL, _IONBF, 0);',
+    '}',
+    ''
+  ].join('\n');
 
   try {
     await fs.writeFile(srcFile, code, 'utf8');
+    await fs.writeFile(ioShimFile, ioShimSource, 'utf8');
 
     const startTime = Date.now();
     const gccPath = getGccPath();
@@ -50,7 +64,7 @@ export async function compileC(code) {
     try {
       const { stderr = '' } = await execFileAsync(
         gccPath,
-        ['-o', binFile, srcFile, '-Wall'],
+        ['-o', binFile, srcFile, ioShimFile, '-Wall'],
         { timeout: COMPILATION_LIMITS.timeoutMs }
       );
       const compilationTime = Date.now() - startTime;
@@ -93,5 +107,6 @@ export async function compileC(code) {
     }
   } finally {
     await fs.remove(srcFile).catch(() => {});
+    await fs.remove(ioShimFile).catch(() => {});
   }
 }

@@ -14,13 +14,41 @@ function npmCommand() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
 }
 
+function quoteWindowsArg(value) {
+  if (!value) {
+    return '""';
+  }
+
+  if (!/[\s"&()<>^|]/.test(value)) {
+    return value;
+  }
+
+  return `"${value
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/g, '$1$1')}"`;
+}
+
+function spawnCommand(command, args, options = {}) {
+  const spawnOptions = {
+    stdio: 'inherit',
+    env: process.env,
+    ...options
+  };
+
+  if (process.platform !== 'win32') {
+    return spawn(command, args, spawnOptions);
+  }
+
+  const commandLine = [command, ...args]
+    .map((arg) => quoteWindowsArg(String(arg)))
+    .join(' ');
+
+  return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], spawnOptions);
+}
+
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: 'inherit',
-      env: process.env,
-      ...options
-    });
+    const child = spawnCommand(command, args, options);
 
     child.on('error', reject);
     child.on('exit', (code, signal) => {
@@ -40,9 +68,11 @@ function runCommand(command, args, options = {}) {
 }
 
 function runNpmScript(scriptName) {
-  const child = spawn(npmCommand(), ['run', scriptName], {
-    stdio: 'inherit',
-    env: process.env
+  const child = spawnCommand(npmCommand(), ['run', scriptName]);
+
+  child.on('error', (error) => {
+    console.error(`Failed to start npm script "${scriptName}":`, error);
+    process.exit(1);
   });
 
   child.on('exit', (code, signal) => {
