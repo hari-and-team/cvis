@@ -39,7 +39,15 @@ export interface VisualizerRenderModel {
   flowDescriptor: VisualizerFlowDescriptor | null;
   stackFrames: VisualizerFrameView[];
   globalValues: VisualizerValueView[];
-  arrays: Array<{ name: string; values: Array<{ idx: number; displayValue: string }> }>;
+  arrays: Array<{
+    name: string;
+    values: Array<{ idx: number; displayValue: string }>;
+    totalCells: number;
+    visibleCells: number;
+    hiddenCells: number;
+    isSummarized: boolean;
+    summaryLabel: string | null;
+  }>;
   linkedLists: VisualizerLinkedList[];
   structBlocks: VisualizerStructBlock[];
   pointerRefs: VisualizerPointerRef[];
@@ -191,7 +199,12 @@ export function buildVisualizerRenderModel(
     values: entry.cells.map((cell) => ({
       idx: cell.idx,
       displayValue: formatValue(cell.value)
-    }))
+    })),
+    totalCells: entry.totalCells,
+    visibleCells: entry.visibleCells,
+    hiddenCells: entry.hiddenCells,
+    isSummarized: entry.isSummarized,
+    summaryLabel: entry.summaryLabel
   }));
 
   const stackItems = normalizedTrace.stack.values.map((item) => formatValue(item));

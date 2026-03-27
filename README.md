@@ -64,12 +64,15 @@ npm run dev:all
 ```
 
 If dependencies or the repo-local compiler are missing, `npm run dev:all` now bootstraps the missing pieces automatically on first run before starting the app.
+`npm run dev:all` also starts both the frontend and backend over local HTTPS using a generated localhost certificate in `.cvis-devcert/`.
+If `mkcert` is installed, cvis will prefer a locally trusted certificate automatically. Otherwise it falls back to a self-signed certificate, which may still show a browser warning.
 
 **What happens:**
 - the toolchain bootstrap downloads a pinned GCC bundle into `.cvis-toolchain/`
 - the backend prefers that repo-local compiler automatically
 - `npm run doctor` verifies Node, dependencies, compiler availability, and a real compile/run smoke test
 - teammates on Windows and Linux do not need to install system GCC manually
+- `npm run dev:all` opens the app at `https://localhost:5173` and proxies API requests to the HTTPS backend at `https://localhost:3001`
 
 **Current bootstrap targets:**
 - Windows x64

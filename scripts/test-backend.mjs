@@ -1,6 +1,13 @@
 import { TRACE_FIXTURES } from './trace-fixtures.mjs';
 
-const API_BASE = process.env.CVIS_API_BASE ?? 'http://localhost:3001';
+const EXPLICIT_API_BASE = process.env.CVIS_API_BASE?.trim() || null;
+const DEFAULT_API_BASE_CANDIDATES = [
+  'https://127.0.0.1:3001',
+  'https://localhost:3001',
+  'http://127.0.0.1:3001',
+  'http://localhost:3001'
+];
+let API_BASE = EXPLICIT_API_BASE;
 
 function log(message = '') {
   console.log(message);
@@ -26,10 +33,42 @@ async function getJson(url, init) {
   return { res, body };
 }
 
+async function canReach(url) {
+  try {
+    const res = await fetch(url, {
+      method: 'GET'
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveApiBase() {
+  if (EXPLICIT_API_BASE) {
+    return EXPLICIT_API_BASE;
+  }
+
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+  for (const base of DEFAULT_API_BASE_CANDIDATES) {
+    if (await canReach(`${base}/health`)) {
+      return base;
+    }
+  }
+
+  throw new Error(
+    'Could not reach a local backend for tests. Start the backend with `npm run dev:all` or set CVIS_API_BASE explicitly.'
+  );
+}
+
 async function main() {
+  API_BASE = await resolveApiBase();
   log('═══════════════════════════════════════════════');
   log('  Backend API Test Suite');
   log('═══════════════════════════════════════════════');
+  log('');
+  log(`Using backend: ${API_BASE}`);
   log('');
 
   log('Test 1: Health check');

@@ -3,7 +3,7 @@
 
   export let trees: VisualizerTree[] = [];
 
-  const NODE_RADIUS = 28;
+  const NODE_RADIUS = 32;
   const LEVEL_GAP = 106;
   const SLOT_GAP = 92;
   const PADDING_X = 44;
@@ -38,13 +38,13 @@
       return '?';
     }
 
-    return normalized.length > 7 ? `${normalized.slice(0, 6)}…` : normalized;
+    return normalized.length > 9 ? `${normalized.slice(0, 8)}…` : normalized;
   }
 
   function nodeFontSize(label: string): number {
-    if (label.length >= 7) return 9;
-    if (label.length >= 5) return 10;
-    return 12;
+    if (label.length >= 9) return 10;
+    if (label.length >= 6) return 11;
+    return 13;
   }
 
   function createEdge(
@@ -183,9 +183,11 @@
                 <title>{node.label}</title>
                 <circle class="tree-node-circle" r={NODE_RADIUS}></circle>
                 <text
+                  x="0"
+                  y="0"
+                  dy="0.35em"
                   class="tree-node-label"
                   text-anchor="middle"
-                  dominant-baseline="middle"
                   style={`font-size: ${nodeFontSize(node.displayLabel)}px;`}
                 >
                   {node.displayLabel}
@@ -273,10 +275,15 @@
 
   .tree-node-label {
     fill: var(--text-bright);
+    stroke: color-mix(in srgb, var(--bg-deep) 82%, transparent);
+    stroke-width: 1.35px;
+    paint-order: stroke fill;
     font-weight: 800;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
     letter-spacing: 0.01em;
     pointer-events: none;
     user-select: none;
+    text-rendering: geometricPrecision;
   }
 
   @media (max-width: 640px) {

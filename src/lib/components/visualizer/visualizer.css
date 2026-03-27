@@ -88,6 +88,12 @@
   background: color-mix(in srgb, var(--bg-raised) 86%, var(--bg-deep));
 }
 
+.array-head-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .frame-head-copy {
   display: flex;
   flex-direction: column;
@@ -106,6 +112,11 @@
   font-size: 9px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.array-summary {
+  color: color-mix(in srgb, var(--text-mid) 82%, var(--text-dim));
+  font-size: 10px;
 }
 
 .frame-badge,
@@ -165,6 +176,12 @@
   gap: 8px;
 }
 
+.array-cells {
+  max-height: 220px;
+  overflow: auto;
+  align-content: flex-start;
+}
+
 .array-cell,
 .linear-cell {
   min-width: 54px;
@@ -183,6 +200,12 @@
   color: var(--text-bright);
   font-size: 12px;
   font-weight: 700;
+}
+
+.array-truncation-note {
+  padding: 0 10px 10px;
+  color: color-mix(in srgb, var(--text-mid) 80%, var(--text-dim));
+  font-size: 10px;
 }
 
 .list-row {

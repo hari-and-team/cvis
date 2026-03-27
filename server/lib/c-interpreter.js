@@ -1747,7 +1747,7 @@ export function assessTraceReadiness(code) {
 // MAIN EXPORT
 // ============================================================================
 
-export async function traceExecution(code, breakpoints = [], input = '', options = {}) {
+export async function traceExecution(code, breakpoints = [], input = '', _options = {}) {
   try {
     const readiness = assessTraceReadiness(code);
     if (readiness.status === 'unsupported') {
