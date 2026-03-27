@@ -2,13 +2,13 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getEffectiveGccSource, verifyGcc } from '../server/lib/gcc-path.js';
 
 const BACKEND_HEALTH_URL = 'http://localhost:3001/health';
 const HEALTH_TIMEOUT_MS = 1200;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_NODE_MODULES = path.join(PROJECT_ROOT, 'node_modules');
 const SERVER_NODE_MODULES = path.join(PROJECT_ROOT, 'server', 'node_modules');
+let gccPathModulePromise;
 
 function npmCommand() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -85,6 +85,14 @@ function runNpmScript(scriptName) {
   });
 }
 
+function loadGccPathModule() {
+  if (!gccPathModulePromise) {
+    gccPathModulePromise = import('../server/lib/gcc-path.js');
+  }
+
+  return gccPathModulePromise;
+}
+
 async function ensureDependenciesInstalled() {
   if (!existsSync(ROOT_NODE_MODULES)) {
     console.log('ℹ️ First run detected: installing root dependencies...');
@@ -98,6 +106,7 @@ async function ensureDependenciesInstalled() {
 }
 
 async function checkLocalCompilerReadiness() {
+  const { getEffectiveGccSource, verifyGcc } = await loadGccPathModule();
   const compilerReady = await verifyGcc();
   if (!compilerReady) {
     console.log('ℹ️ No working compiler detected. Bootstrapping the repo-local toolchain...');

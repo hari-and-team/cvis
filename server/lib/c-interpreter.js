@@ -25,7 +25,7 @@ import { detectUnsupportedTraceFeature } from './trace/unsupported-syntax.js';
 const KEYWORDS = new Set([
   'int', 'float', 'double', 'char', 'void', 'return',
   'if', 'else', 'while', 'for', 'do', 'break', 'continue',
-  'struct', 'sizeof', 'NULL', 'true', 'false'
+  'struct', 'sizeof', 'typedef', 'NULL', 'true', 'false'
 ]);
 
 const TYPES = new Set(['int', 'float', 'double', 'char', 'void', 'long', 'short', 'unsigned']);
@@ -211,6 +211,7 @@ class Parser {
   constructor(tokens) {
     this.tokens = tokens;
     this.pos = 0;
+    this.typedefNames = new Set();
   }
 
   peek(n = 0) { return this.tokens[this.pos + n] || { type: 'EOF', value: '' }; }
@@ -235,6 +236,8 @@ class Parser {
     while (this.peek().type !== 'EOF') {
       if (this.peek().type === 'PREP') {
         program.body.push({ type: 'Preprocessor', value: this.advance().value });
+      } else if (this.peek().type === 'KW' && this.peek().value === 'typedef') {
+        program.body.push(this.parseTypedef());
       } else if (
         this.peek().type === 'KW' &&
         this.peek().value === 'struct' &&
@@ -258,12 +261,44 @@ class Parser {
 
   isTypeKeyword() {
     const t = this.peek();
-    return TYPES.has(t.value) || t.value === 'void' || t.value === 'struct';
+    return (
+      (t.type === 'KW' && (TYPES.has(t.value) || t.value === 'void' || t.value === 'struct')) ||
+      (t.type === 'ID' && this.typedefNames.has(t.value))
+    );
+  }
+
+  parseTypedef() {
+    const line = this.peek().line;
+    this.expect('KW', 'typedef');
+
+    let alias = '';
+    let depth = 0;
+    while (this.peek().type !== 'EOF') {
+      const token = this.advance();
+      if (token.value === '{') {
+        depth += 1;
+      } else if (token.value === '}') {
+        depth = Math.max(0, depth - 1);
+      } else if (depth === 0 && token.type === 'ID') {
+        alias = token.value;
+      }
+
+      if (depth === 0 && token.value === ';') {
+        break;
+      }
+    }
+
+    if (alias) {
+      this.typedefNames.add(alias);
+    }
+
+    return { type: 'Typedef', name: alias, line };
   }
 
   parseDeclaration() {
     const line = this.peek().line;
-    let typeName = this.parseType();
+    const baseType = this.parseType();
+    let typeName = baseType;
     
     // Check for pointer
     while (this.match('OP', '*')) {
@@ -285,7 +320,23 @@ class Parser {
       }
     }
 
-    // Array declaration
+    const declarations = [this.parseDeclaredBinding(typeName, name, line)];
+    while (this.match('OP', ',')) {
+      let declaratorType = baseType;
+      while (this.match('OP', '*')) declaratorType += '*';
+      const vname = this.expect('ID').value;
+      declarations.push(this.parseDeclaredBinding(declaratorType, vname, line));
+    }
+    this.expect('OP', ';');
+
+    if (declarations.length === 1) {
+      return declarations[0];
+    }
+
+    return { type: 'DeclList', declarations, line };
+  }
+
+  parseDeclaredBinding(typeName, name, line) {
     if (this.match('OP', '[')) {
       const sizeExpr = this.peek().value !== ']' ? this.parseExpression() : null;
       this.expect('OP', ']');
@@ -293,29 +344,20 @@ class Parser {
       if (this.match('OP', '=')) {
         init = this.parseInitializer();
       }
-      this.expect('OP', ';');
       return { type: 'ArrayDecl', varType: typeName, name, sizeExpr, init, line };
     }
 
-    // Variable declaration
     let init = null;
     if (this.match('OP', '=')) {
       init = this.parseExpression();
     }
 
-    // Multiple declarations
-    const vars = [{ name, init }];
-    while (this.match('OP', ',')) {
-      while (this.match('OP', '*')) typeName += '*';
-      const vname = this.expect('ID').value;
-      let vinit = null;
-      if (this.match('OP', '=')) {
-        vinit = this.parseExpression();
-      }
-      vars.push({ name: vname, init: vinit });
-    }
-    this.expect('OP', ';');
-    return { type: 'VarDecl', varType: typeName, vars, line };
+    return {
+      type: 'VarDecl',
+      varType: typeName,
+      vars: [{ name, init }],
+      line
+    };
   }
 
   parseType() {
@@ -326,6 +368,10 @@ class Parser {
         type += ` ${this.advance().value}`;
       }
       return type;
+    }
+
+    if (this.peek().type === 'ID' && this.typedefNames.has(this.peek().value)) {
+      return this.advance().value;
     }
 
     while (this.peek().type === 'KW' && TYPES.has(this.peek().value)) {
@@ -687,7 +733,12 @@ class Parser {
       return false;
     }
 
-    if (!(token.type === 'KW' && (TYPES.has(token.value) || token.value === 'void' || token.value === 'struct'))) {
+    if (
+      !(
+        (token.type === 'KW' && (TYPES.has(token.value) || token.value === 'void' || token.value === 'struct')) ||
+        (token.type === 'ID' && this.typedefNames.has(token.value))
+      )
+    ) {
       return false;
     }
 
@@ -849,7 +900,7 @@ class Interpreter {
     try {
       // Execute global declarations first
       for (const node of this.ast.body) {
-        if (node.type === 'VarDecl' || node.type === 'ArrayDecl') {
+        if (node.type === 'VarDecl' || node.type === 'ArrayDecl' || node.type === 'DeclList') {
           this.execute(node);
         }
       }
@@ -1021,34 +1072,24 @@ class Interpreter {
 
     switch (node.type) {
       case 'VarDecl': {
-        this.recordStep(node.line, `Variable declaration`);
-        for (const v of node.vars) {
-          const val = v.init ? this.evaluate(v.init) : 0;
-          this.setVar(v.name, val);
-        }
+        this.executeVarDecl(node);
         return;
       }
 
       case 'ArrayDecl': {
-        this.recordStep(node.line, `Array declaration: ${node.name}`);
-        const declaredSize = node.sizeExpr
-          ? Math.max(0, Math.trunc(this.evaluate(node.sizeExpr)))
-          : Number.isFinite(node.size)
-            ? Math.max(0, Math.trunc(node.size))
-            : 0;
-        const size = declaredSize || (node.init?.elements?.length || 0);
-        if (size > MAX_TRACE_ARRAY_LENGTH) {
-          throw new Error(
-            `Trace array limit exceeded (${size}). The trace engine supports arrays up to ${MAX_TRACE_ARRAY_LENGTH} elements. Use compile/run for larger inputs.`
-          );
-        }
-        const arr = new Array(size).fill(0);
-        if (node.init?.elements) {
-          for (let i = 0; i < node.init.elements.length && i < size; i++) {
-            arr[i] = this.evaluate(node.init.elements[i]);
+        this.executeArrayDecl(node);
+        return;
+      }
+
+      case 'DeclList': {
+        this.recordStep(node.line, `Variable declaration`);
+        for (const declaration of node.declarations) {
+          if (declaration.type === 'VarDecl') {
+            this.executeVarDecl(declaration, false);
+          } else if (declaration.type === 'ArrayDecl') {
+            this.executeArrayDecl(declaration, false);
           }
         }
-        this.setVar(node.name, arr);
         return;
       }
 
@@ -1082,7 +1123,7 @@ class Interpreter {
 
       case 'For': {
         if (node.init) {
-          if (node.init.type === 'VarDecl' || node.init.type === 'ExprStmt') {
+          if (node.init.type === 'VarDecl' || node.init.type === 'ArrayDecl' || node.init.type === 'DeclList' || node.init.type === 'ExprStmt') {
             this.execute(node.init);
           } else {
             this.evaluate(node.init);
@@ -1138,6 +1179,42 @@ class Interpreter {
         break;
       }
     }
+  }
+
+  executeVarDecl(node, shouldRecord = true) {
+    if (shouldRecord) {
+      this.recordStep(node.line, `Variable declaration`);
+    }
+
+    for (const v of node.vars) {
+      const val = v.init ? this.evaluate(v.init) : 0;
+      this.setVar(v.name, val);
+    }
+  }
+
+  executeArrayDecl(node, shouldRecord = true) {
+    if (shouldRecord) {
+      this.recordStep(node.line, `Array declaration: ${node.name}`);
+    }
+
+    const declaredSize = node.sizeExpr
+      ? Math.max(0, Math.trunc(this.evaluate(node.sizeExpr)))
+      : Number.isFinite(node.size)
+        ? Math.max(0, Math.trunc(node.size))
+        : 0;
+    const size = declaredSize || (node.init?.elements?.length || 0);
+    if (size > MAX_TRACE_ARRAY_LENGTH) {
+      throw new Error(
+        `Trace array limit exceeded (${size}). The trace engine supports arrays up to ${MAX_TRACE_ARRAY_LENGTH} elements. Use compile/run for larger inputs.`
+      );
+    }
+    const arr = new Array(size).fill(0);
+    if (node.init?.elements) {
+      for (let i = 0; i < node.init.elements.length && i < size; i++) {
+        arr[i] = this.evaluate(node.init.elements[i]);
+      }
+    }
+    this.setVar(node.name, arr);
   }
 
   evaluate(node) {

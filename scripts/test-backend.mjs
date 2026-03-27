@@ -224,7 +224,44 @@ async function main() {
   log('✓ AI intent analysis returned structured output');
   log('');
 
-  log('Test 13: Reject unsafe binary path');
+  log('Test 13: Trace supports typedef-based binary tree nodes');
+  const typedefTreeTrace = await getJson(`${API_BASE}/api/trace`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code:
+        'typedef struct Node {\n' +
+        '  int data;\n' +
+        '  struct Node* left;\n' +
+        '  struct Node* right;\n' +
+        '} Node;\n\n' +
+        'Node* createNode(int data) {\n' +
+        '  Node* node = (Node*)malloc(sizeof(Node));\n' +
+        '  node->data = data;\n' +
+        '  node->left = NULL;\n' +
+        '  node->right = NULL;\n' +
+        '  return node;\n' +
+        '}\n\n' +
+        'int main() {\n' +
+        '  Node* root = createNode(1);\n' +
+        '  root->left = createNode(2);\n' +
+        '  root->right = createNode(3);\n' +
+        '  return 0;\n' +
+        '}\n'
+    })
+  });
+  log(JSON.stringify({
+    success: typedefTreeTrace.body?.success,
+    totalSteps: typedefTreeTrace.body?.totalSteps,
+    errors: typedefTreeTrace.body?.errors
+  }, null, 2));
+  assert(typedefTreeTrace.body?.success === true, 'Typedef-based binary tree trace should succeed');
+  const heap = typedefTreeTrace.body?.steps?.at(-1)?.runtime?.heap ?? {};
+  assert(Object.keys(heap).length >= 3, 'Binary tree trace should capture heap-backed nodes');
+  log('✓ Typedef-based binary tree trace now succeeds');
+  log('');
+
+  log('Test 14: Reject unsafe binary path');
   const unsafe = await getJson(`${API_BASE}/api/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

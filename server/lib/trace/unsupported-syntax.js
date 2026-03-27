@@ -28,10 +28,6 @@ const UNSUPPORTED_TRACE_FEATURES = [
     message: 'Trace does not support these bitwise operators yet. Use compile/run for exact execution.'
   },
   {
-    regex: /\btypedef\b/,
-    message: 'Trace does not support typedef declarations yet. Expand the concrete type names for tracing.'
-  },
-  {
     regex: /\bunion\b/,
     message: 'Trace does not support union declarations yet. Use compile/run for exact execution.'
   },
