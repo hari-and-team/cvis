@@ -244,7 +244,7 @@
   </div>
 
   <!-- Editor Area -->
-  <div class="editor-area" on:pointerdown={focusEditor}>
+  <div class="editor-area" role="presentation" on:pointerdown={focusEditor}>
     <!-- Line Numbers Gutter -->
     <div bind:this={lnRef} class="line-gutter">
       {#each Array.from({ length: lineCount }, (_, i) => i) as i}
@@ -265,6 +265,7 @@
       <pre
         bind:this={preRef}
         class="code-display"
+        aria-hidden="true"
       >{@html highlight(code)}</pre>
       <textarea
         bind:this={taRef}
@@ -275,7 +276,6 @@
         wrap="off"
         spellcheck={false}
         autocapitalize="off"
-        autocorrect="off"
         autocomplete="off"
         class="code-input"
       ></textarea>
@@ -415,8 +415,8 @@
     padding: 12px;
     margin: 0;
     background: transparent;
-    color: rgba(229, 229, 229, 0.01);
-    -webkit-text-fill-color: rgba(229, 229, 229, 0.01);
+    color: #e5e5e5;
+    -webkit-text-fill-color: currentColor;
     caret-color: #e5e5e5;
     resize: none;
     outline: none;
