@@ -73,8 +73,8 @@
 }
 
 .frame-card.frame-active {
-  border-color: color-mix(in srgb, var(--blue) 48%, var(--border));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--blue) 16%, transparent);
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--border));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--blue) 10%, transparent);
 }
 
 .frame-head,
@@ -86,6 +86,12 @@
   padding: 9px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   background: color-mix(in srgb, var(--bg-raised) 86%, var(--bg-deep));
+}
+
+.array-head-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .frame-head-copy {
@@ -106,6 +112,11 @@
   font-size: 9px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.array-summary {
+  color: color-mix(in srgb, var(--text-mid) 82%, var(--text-dim));
+  font-size: 10px;
 }
 
 .frame-badge,
@@ -147,8 +158,8 @@
 }
 
 .var-card.var-changed {
-  border-color: color-mix(in srgb, var(--blue) 48%, var(--border));
-  background: color-mix(in srgb, var(--blue) 12%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--border));
+  background: color-mix(in srgb, var(--blue) 8%, var(--bg-raised));
 }
 
 .var-empty {
@@ -163,6 +174,12 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.array-cells {
+  max-height: 220px;
+  overflow: auto;
+  align-content: flex-start;
 }
 
 .array-cell,
@@ -185,6 +202,12 @@
   font-weight: 700;
 }
 
+.array-truncation-note {
+  padding: 0 10px 10px;
+  color: color-mix(in srgb, var(--text-mid) 80%, var(--text-dim));
+  font-size: 10px;
+}
+
 .list-row {
   display: flex;
   align-items: center;
@@ -205,7 +228,7 @@
 .linked-struct-card {
   min-width: 132px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--blue) 34%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--border));
   background: color-mix(in srgb, var(--bg-raised) 88%, var(--bg-deep));
   overflow: hidden;
 }
@@ -217,7 +240,7 @@
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  background: color-mix(in srgb, var(--blue) 7%, transparent);
 }
 
 .linked-struct-title,
@@ -288,7 +311,7 @@
 
 .struct-block {
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--purple) 28%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--purple) 22%, var(--border));
   background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
   overflow: hidden;
 }
@@ -304,7 +327,7 @@
   gap: 10px;
   padding: 10px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  background: color-mix(in srgb, var(--purple) 9%, transparent);
+  background: color-mix(in srgb, var(--purple) 7%, transparent);
 }
 
 .struct-head-copy,

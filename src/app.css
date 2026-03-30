@@ -3,28 +3,52 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Inter', 'Segoe UI Variable', 'SF Pro Display', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
-  
-  /* One Dark Pro CSS variables */
-  --bg-deep: #21252b;
-  --bg-card: #282c34;
-  --bg-raised: #2c313a;
-  --border: #3e4451;
-  --border-deep: #181a1f;
-  --text-dim: #5c6370;
-  --text-mid: #abb2bf;
-  --text-bright: #e5e5e5;
-  --accent: #61afef;
-  --blue: #61afef;
-  --green: #98c379;
-  --yellow: #e5c07b;
-  --orange: #d19a66;
-  --red: #e06c75;
-  --purple: #c678dd;
-  --cyan: #56b6c2;
+
+  /* Core surfaces */
+  --surface-0: #232730;
+  --surface-1: #282c34;
+  --surface-2: #313643;
+  --surface-3: #3a4150;
+  --border: #454c5d;
+  --border-soft: #3a4050;
+  --border-deep: #1a1e25;
+
+  /* Typography */
+  --text-dim: #8d95a4;
+  --text-mid: #c5cbd6;
+  --text-bright: #e5e9f0;
+
+  /* Semantic aliases */
+  --bg-deep: var(--surface-0);
+  --bg-card: var(--surface-1);
+  --bg-raised: var(--surface-2);
+
+  /* Shell-inspired accent system */
+  --accent: #7f9fca;
+  --blue: #7f9fca;
+  --green: #90af80;
+  --yellow: #c2ab77;
+  --orange: #bd9478;
+  --red: #b87a86;
+  --purple: #9181b2;
+  --cyan: #88afc1;
+  --selection-bg: #4e4a6d;
+  --selection-accent: #7a6c9d;
+  --lavender: #cba6f7;
+
+  --shadow-soft: 0 16px 34px rgba(9, 11, 15, 0.18);
+  --shadow-lift: 0 24px 52px rgba(9, 11, 15, 0.26);
+  --radius-panel: 12px;
+  --radius-card: 10px;
+  --radius-control: 8px;
+  --radius-chip: 999px;
+  --scrollbar-track: color-mix(in srgb, var(--surface-0) 88%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--selection-bg) 44%, var(--surface-3));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--selection-accent) 38%, var(--surface-3));
 }
 
 html,
@@ -34,8 +58,11 @@ body {
   width: 100%;
   min-width: 320px;
   min-height: 100%;
-  background: #282c34;
-  color: #abb2bf;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--selection-accent) 9%, transparent), transparent 34%),
+    radial-gradient(circle at bottom right, color-mix(in srgb, var(--blue) 7%, transparent), transparent 30%),
+    linear-gradient(180deg, #2c3039 0%, #232730 100%);
+  color: var(--text-mid);
 }
 
 #svelte,
@@ -48,31 +75,41 @@ body {
 }
 
 /* Scrollbar styling for dark theme */
+html {
+  scrollbar-gutter: stable;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #21252b;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3e4451;
-  border-radius: 5px;
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #5c6370;
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Selection highlight styling */
 ::selection {
-  background: #61afef40;
-  color: #e5e5e5;
+  background: color-mix(in srgb, var(--selection-bg) 92%, transparent);
+  color: var(--text-bright);
 }
 
 ::-moz-selection {
-  background: #61afef40;
-  color: #e5e5e5;
+  background: color-mix(in srgb, var(--selection-bg) 92%, transparent);
+  color: var(--text-bright);
 }

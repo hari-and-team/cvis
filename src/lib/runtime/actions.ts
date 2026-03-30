@@ -1,13 +1,11 @@
 import {
   closeRunInput,
   compileCode,
-  executeCode,
   pollRunSession,
   sendRunInput,
   startRunSession,
   stopRunSession,
-  traceCode,
-  EXECUTION_MODE
+  traceCode
 } from '$lib/api';
 import {
   currentStepIndex,
@@ -24,6 +22,11 @@ import {
   runSessionId,
   traceSteps
 } from '$lib/stores';
+import {
+  hydrateRuntimeCapabilities,
+  nativeExecutionEnabled,
+  nativeExecutionUnavailableMessage
+} from '$lib/runtime-capabilities';
 import { validateCompileRequest, validateTraceRequest } from '$lib/validation';
 
 interface CompileRunActionParams {
@@ -233,6 +236,15 @@ export async function runCompileAction({
   code
 }: CompileRunActionParams): Promise<boolean> {
   try {
+    await hydrateRuntimeCapabilities();
+
+    if (!nativeExecutionEnabled()) {
+      errorMessage.set(nativeExecutionUnavailableMessage());
+      lastCompileResult.set(null);
+      lastBinaryPath.set(null);
+      return false;
+    }
+
     const validationError = validateCompileRequest(code);
     if (validationError) {
       errorMessage.set(validationError);
@@ -277,72 +289,18 @@ export async function runCompileAction({
   }
 }
 
-function codeNeedsLiveInput(code: string): boolean {
-  return /\b(scanf|fscanf|getchar|fgets|gets)\s*\(/.test(code);
-}
-
-async function runServerlessCodeAction(code: string): Promise<void> {
-  try {
-    const validationError = validateCompileRequest(code);
-    if (validationError) {
-      errorMessage.set(validationError);
-      return;
-    }
-
-    if (codeNeedsLiveInput(code)) {
-      errorMessage.set(
-        'This deployment uses stateless execution, so live stdin is not available here. Use a stateful backend deployment for scanf/getchar-style programs.'
-      );
-      return;
-    }
-
-    await stopActiveRuntimeSession();
-
-    isRunning.set(true);
-    errorMessage.set(null);
-    resetRuntimeOutputState();
-
-    const result = await executeCode({
-      code,
-      args: [],
-      input: ''
-    });
-
-    lastCompileResult.set(result.compile);
-
-    if (!result.compile.success) {
-      errorMessage.set(result.compile.errors.join('\n'));
-      lastBinaryPath.set(null);
-      return;
-    }
-
-    lastBinaryPath.set(result.compile.binary ?? null);
-
-    if (!result.execution) {
-      errorMessage.set('Execution failed before a runtime result was returned.');
-      return;
-    }
-
-    lastExecutionResult.set(result.execution);
-    runConsoleTranscript.set(`${result.execution.stdout}${result.execution.stderr}`);
-
-    if (result.execution.exitCode !== 0 && result.execution.stderr) {
-      errorMessage.set(result.execution.stderr);
-    }
-  } catch (err) {
-    const message = getErrorMessage(err, 'An error occurred');
-    errorMessage.set(message);
-    console.error('Run error:', err);
-  } finally {
-    isRunning.set(false);
-  }
-}
-
-async function runInteractiveBinaryAction(binaryPath: string | null): Promise<void> {
+export async function runBinaryAction(binaryPath: string | null): Promise<void> {
   let startedSessionId: string | null = null;
   let consecutivePollFailures = 0;
 
   try {
+    await hydrateRuntimeCapabilities();
+
+    if (!nativeExecutionEnabled()) {
+      errorMessage.set(nativeExecutionUnavailableMessage());
+      return;
+    }
+
     if (!binaryPath) {
       errorMessage.set('Compile successfully before running the program.');
       return;
@@ -371,7 +329,9 @@ async function runInteractiveBinaryAction(binaryPath: string | null): Promise<vo
       stderr: '',
       exitCode: 0,
       executionTime: 0,
-      peakMemoryBytes: null
+      peakMemoryBytes: null,
+      inputClosed: false,
+      completionReason: null
     });
 
     while (activeRunSessionId === startedSessionId) {
@@ -419,7 +379,9 @@ async function runInteractiveBinaryAction(binaryPath: string | null): Promise<vo
         stderr: poll.stderr,
         exitCode: poll.done ? (poll.exitCode ?? 1) : 0,
         executionTime: poll.executionTime,
-        peakMemoryBytes: poll.peakMemoryBytes ?? null
+        peakMemoryBytes: poll.peakMemoryBytes ?? null,
+        inputClosed: Boolean(poll.inputClosed),
+        completionReason: poll.completionReason ?? null
       });
 
       if (poll.done) {
@@ -454,17 +416,6 @@ async function runInteractiveBinaryAction(binaryPath: string | null): Promise<vo
   } finally {
     isRunning.set(false);
   }
-}
-
-export async function runBinaryAction(params: {
-  binaryPath: string | null;
-  code: string;
-}): Promise<void> {
-  if (EXECUTION_MODE === 'serverless') {
-    return runServerlessCodeAction(params.code);
-  }
-
-  return runInteractiveBinaryAction(params.binaryPath);
 }
 
 export async function sendRuntimeInputLine(line: string): Promise<void> {
@@ -520,14 +471,17 @@ export async function interruptRuntimeSession(): Promise<void> {
     current
       ? {
           ...current,
-          exitCode: 130
+          exitCode: 130,
+          completionReason: 'stopped'
         }
       : {
           stdout: '',
           stderr: '',
           exitCode: 130,
           executionTime: 0,
-          peakMemoryBytes: null
+          peakMemoryBytes: null,
+          inputClosed: false,
+          completionReason: 'stopped'
         }
   );
   runConsoleTranscript.update((prev) => `${prev}^C\n`);
@@ -558,7 +512,7 @@ export async function runTraceAction({
     const result = await traceCode({
       code,
       breakpoints,
-      input
+      input: input ?? ''
     });
 
     if (result.success) {

@@ -11,3 +11,4 @@ export const runSessionId = writable<string | null>(null);
 export const runConsoleTranscript = writable<string>('');
 export const lastRunInputTranscript = writable<string>('');
 export const pendingRunInputEcho = writable<string>('');
+export const traceInputDraft = writable<string>('');

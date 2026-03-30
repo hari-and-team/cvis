@@ -1,4 +1,3 @@
-import { env } from '$env/dynamic/public';
 import type {
   AnalyzeIntentRequest,
   AnalyzeIntentResult,
@@ -6,30 +5,25 @@ import type {
   CompileResult,
   ExecutionRequest,
   ExecutionResult,
-  SourceExecutionRequest,
-  SourceExecutionResult,
   RunSessionEofResult,
   RunSessionInputRequest,
   RunSessionInputResult,
   RunSessionPollResult,
   RunSessionStartRequest,
   RunSessionStartResult,
+  TraceReadinessRequest,
+  TraceReadinessResult,
   TraceRequest,
   TraceResult
 } from './types';
 
-const API_BASE = (env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || '')
-  .trim()
-  .replace(/\/$/, '');
-const EXECUTION_MODE_RAW = (env.PUBLIC_EXECUTION_MODE || import.meta.env.VITE_EXECUTION_MODE || '')
-  .trim()
-  .toLowerCase();
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 const REQUEST_TIMEOUTS_MS: Record<string, number> = {
   default: 15_000,
   compile: 20_000,
   run: 20_000,
   trace: 20_000,
+  traceReadiness: 8_000,
   analyze: 12_000,
   runStart: 10_000,
   runPoll: 6_000,
@@ -37,44 +31,6 @@ const REQUEST_TIMEOUTS_MS: Record<string, number> = {
   runStop: 6_000,
   runEof: 6_000
 } as const;
-
-export const EXECUTION_MODE =
-  EXECUTION_MODE_RAW === 'serverless' || EXECUTION_MODE_RAW === 'stateless'
-    ? 'serverless'
-    : 'interactive';
-
-function isLocalHostname(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '0.0.0.0' ||
-    hostname === '::1' ||
-    hostname.endsWith('.localhost')
-  );
-}
-
-function assertSecureApiBase(action: string): void {
-  if (!API_BASE || typeof window === 'undefined') {
-    return;
-  }
-
-  let apiUrl: URL;
-  try {
-    apiUrl = new URL(API_BASE, window.location.origin);
-  } catch {
-    return;
-  }
-
-  if (apiUrl.protocol !== 'http:' || isLocalHostname(apiUrl.hostname)) {
-    return;
-  }
-
-  if (window.location.protocol === 'https:' || import.meta.env.PROD) {
-    throw new Error(
-      `${action} failed: insecure API base "${apiUrl.origin}" is not allowed here. Configure the backend over HTTPS.`
-    );
-  }
-}
 
 function backendUnavailableMessage(action: string, error: unknown): Error {
   const offlineHint =
@@ -102,12 +58,11 @@ async function fetchWithTimeout(
   action: string,
   timeoutMs: number
 ): Promise<Response> {
-  assertSecureApiBase(action);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(`${API_BASE}${endpoint}`, {
+    return await fetch(endpoint, {
       ...init,
       signal: controller.signal
     });
@@ -196,6 +151,7 @@ async function requestJson<T>(
 
 async function parseJsonResponse<T>(res: Response, action: string): Promise<T> {
   const text = await res.text().catch(() => '');
+  const contentType = res.headers.get('content-type') || 'unknown';
 
   if (!text.trim()) {
     throw new Error(`${action} failed: backend returned an empty response`);
@@ -204,7 +160,10 @@ async function parseJsonResponse<T>(res: Response, action: string): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error(`${action} failed: backend returned invalid JSON`);
+    const excerpt = text.replace(/\s+/g, ' ').slice(0, 180);
+    throw new Error(
+      `${action} failed: backend returned invalid JSON (content-type: ${contentType}). Response started with: ${excerpt}`
+    );
   }
 }
 
@@ -232,20 +191,20 @@ export async function runBinary(req: ExecutionRequest): Promise<ExecutionResult>
   }, 'Run', REQUEST_TIMEOUTS_MS.run);
 }
 
-export async function executeCode(req: SourceExecutionRequest): Promise<SourceExecutionResult> {
-  return requestJson<SourceExecutionResult>('/api/execute', {
-    method: 'POST',
-    headers: JSON_HEADERS,
-    body: JSON.stringify(req)
-  }, 'Execute', REQUEST_TIMEOUTS_MS.run);
-}
-
 export async function traceCode(req: TraceRequest): Promise<TraceResult> {
   return requestJson<TraceResult>('/api/trace', {
     method: 'POST',
     headers: JSON_HEADERS,
     body: JSON.stringify(req)
   }, 'Trace', REQUEST_TIMEOUTS_MS.trace);
+}
+
+export async function getTraceReadiness(req: TraceReadinessRequest): Promise<TraceReadinessResult> {
+  return requestJson<TraceReadinessResult>('/api/trace/readiness', {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify(req)
+  }, 'Trace readiness', REQUEST_TIMEOUTS_MS.traceReadiness);
 }
 
 export async function startRunSession(req: RunSessionStartRequest): Promise<RunSessionStartResult> {

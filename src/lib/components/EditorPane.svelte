@@ -280,10 +280,11 @@
 <style>
   /* Editor Pane Container */
   .editor-pane {
-    width: 50%;
     display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
     flex-direction: column;
-    border-right: 1px solid #3e4451;
     background: #282c34;
   }
 

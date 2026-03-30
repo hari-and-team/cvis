@@ -1,3 +1,4 @@
+// @ts-nocheck
 const LABELS = {
   sorting: 'Sorting',
   searching: 'Searching',

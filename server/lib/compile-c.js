@@ -6,7 +6,7 @@ import os from 'os';
 import crypto from 'crypto';
 import { COMPILATION_LIMITS, REQUEST_LIMITS } from '../config/constants.js';
 import { getManagedBinaryPath } from './binary-artifacts.js';
-import { getGccPath } from './gcc-path.js';
+import { getGccPath, verifyGcc } from './gcc-path.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,6 +41,19 @@ export async function compileC(code) {
   const srcFile = path.join(tmpDir, `code_${jobId}.c`);
   const ioShimFile = path.join(tmpDir, `code_${jobId}_stdio_shim.c`);
   const binFile = getManagedBinaryPath(tmpDir, jobId);
+  const gccPath = getGccPath();
+
+  if (!(await verifyGcc())) {
+    return {
+      success: false,
+      errors: [
+        `GCC is not available in this deployment (resolved path: ${gccPath}). Deploy the execution backend on a host that supports native compiler binaries.`
+      ],
+      warnings: [],
+      compilationTime: 0
+    };
+  }
+
   const ioShimSource = [
     '#include <stdio.h>',
     '',
@@ -59,7 +72,6 @@ export async function compileC(code) {
     await fs.writeFile(ioShimFile, ioShimSource, 'utf8');
 
     const startTime = Date.now();
-    const gccPath = getGccPath();
 
     try {
       const { stderr = '' } = await execFileAsync(

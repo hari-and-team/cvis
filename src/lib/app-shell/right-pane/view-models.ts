@@ -11,16 +11,23 @@ export interface ConsoleViewModel {
   compileSummary: string | null;
   runSummary: string | null;
   canSendToStdin: boolean;
+  nativeExecutionEnabled: boolean;
   workspaceError: string | null;
 }
 
 export interface VisualizerViewModel {
   status: 'empty' | 'loading' | 'error' | 'ready';
+  nativeExecutionEnabled: boolean;
   traceUsesRuntimeInput: boolean;
+  canStartTrace: boolean;
   hasCapturedRunInput: boolean;
+  hasManualTraceInput: boolean;
+  isConsoleRunActive: boolean;
+  inputReplayNeedsFreshRun: boolean;
   traceConsoleOutput: string;
   traceNotice: string | null;
   capturedRunInputLineCount: number;
+  manualTraceInputLineCount: number;
   traceConsoleStatus: string;
   isTracing: boolean;
   traceErr: string | null;
@@ -212,6 +219,7 @@ export function buildConsoleViewModel({
   lastCompileResult,
   lastExecutionResult,
   canSendToStdin,
+  nativeExecutionEnabled,
   workspaceError
 }: {
   output: string;
@@ -219,6 +227,7 @@ export function buildConsoleViewModel({
   lastCompileResult: CompileResult | null;
   lastExecutionResult: ExecutionResult | null;
   canSendToStdin: boolean;
+  nativeExecutionEnabled: boolean;
   workspaceError: string | null;
 }): ConsoleViewModel {
   return {
@@ -237,6 +246,7 @@ export function buildConsoleViewModel({
         }`
       : null,
     canSendToStdin,
+    nativeExecutionEnabled,
     workspaceError
   };
 }
@@ -244,26 +254,32 @@ export function buildConsoleViewModel({
 export function buildVisualizerViewModel({
   editorCode,
   runConsoleTranscript,
+  runSessionId,
   lastExecutionResult,
   lastCompileResult,
   lastRunInputTranscript,
+  manualTraceInput,
   pendingRunInputEcho,
   traceSteps,
   currentTraceStepData,
   isTracing,
   traceErr,
+  nativeExecutionEnabled,
   traceNotice
 }: {
   editorCode: string;
   runConsoleTranscript: string;
+  runSessionId: string | null;
   lastExecutionResult: ExecutionResult | null;
   lastCompileResult: CompileResult | null;
   lastRunInputTranscript: string;
+  manualTraceInput: string;
   pendingRunInputEcho: string;
   traceSteps: TraceStep[];
   currentTraceStepData: TraceStep | null;
   isTracing: boolean;
   traceErr: string | null;
+  nativeExecutionEnabled: boolean;
   traceNotice: string | null;
 }): VisualizerViewModel {
   const intentPrediction = predictProgramIntent(editorCode);
@@ -277,10 +293,26 @@ export function buildVisualizerViewModel({
   const renderedOutput = `${output}${pendingRunInputEcho}`;
   const traceUsesRuntimeInput = /\bscanf\s*\(/.test(editorCode);
   const hasCapturedRunInput = lastRunInputTranscript.length > 0;
+  const hasManualTraceInput = manualTraceInput.length > 0;
+  const isConsoleRunActive = typeof runSessionId === 'string' && runSessionId.length > 0;
+  const inputReplayNeedsFreshRun =
+    traceUsesRuntimeInput &&
+    hasCapturedRunInput &&
+    lastExecutionResult?.completionReason === 'stopped';
+  const canReplayCapturedInput = hasCapturedRunInput && !inputReplayNeedsFreshRun;
+  const canStartTrace =
+    !isConsoleRunActive &&
+    (!traceUsesRuntimeInput || canReplayCapturedInput || hasManualTraceInput);
   const capturedRunInputLineCount =
     lastRunInputTranscript.length === 0
       ? 0
       : lastRunInputTranscript
+          .split('\n')
+          .filter((line, index, lines) => line.length > 0 || index < lines.length - 1).length;
+  const manualTraceInputLineCount =
+    manualTraceInput.length === 0
+      ? 0
+      : manualTraceInput
           .split('\n')
           .filter((line, index, lines) => line.length > 0 || index < lines.length - 1).length;
 
@@ -292,18 +324,34 @@ export function buildVisualizerViewModel({
         : traceSteps.length > 0
           ? 'ready'
           : 'empty',
+    nativeExecutionEnabled,
     traceUsesRuntimeInput,
+    canStartTrace,
     hasCapturedRunInput,
+    hasManualTraceInput,
+    isConsoleRunActive,
+    inputReplayNeedsFreshRun,
     traceConsoleOutput: renderedOutput || output,
     traceNotice,
     capturedRunInputLineCount,
+    manualTraceInputLineCount,
     traceConsoleStatus: traceUsesRuntimeInput
-      ? hasCapturedRunInput
-        ? 'stdin replay ready'
-        : 'run first'
-      : renderedOutput
-        ? 'latest console output'
-        : 'optional',
+      ? isConsoleRunActive
+        ? 'finish current run'
+        : hasManualTraceInput
+          ? 'manual stdin ready'
+          : inputReplayNeedsFreshRun
+            ? 'rerun before trace'
+            : canReplayCapturedInput
+              ? 'stdin replay ready'
+              : nativeExecutionEnabled
+                ? 'run first or enter stdin'
+                : 'enter stdin'
+      : isConsoleRunActive
+        ? 'finish current run'
+        : renderedOutput
+          ? 'latest console output'
+          : 'optional',
     isTracing,
     traceErr,
     traceSteps,

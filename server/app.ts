@@ -7,33 +7,29 @@ import type {
   NextLike,
   RequestLike,
   ResponseLike
-} from './lib/http/http-types.ts';
-import { getErrorMessage } from './lib/http/request-validation.ts';
+} from './lib/http/http-types.js';
+import { getErrorMessage } from './lib/http/request-validation.js';
 import {
   httpsEnforcementMiddleware,
   rateLimitMiddleware,
   resolveCorsSettings,
   resolveTrustProxySetting,
   securityHeadersMiddleware
-} from './lib/http/security.ts';
-import { registerRoutes } from './routes/index.ts';
+} from './lib/http/security.js';
+import { registerRoutes } from './routes/index.js';
 
 export function createApp(): ListenableAppLike {
   const app = express();
   const corsSettings = resolveCorsSettings();
-  const corsMiddleware = cors({
-    origin: corsSettings.origin,
-    credentials: corsSettings.credentials,
-    methods: corsSettings.methods,
-    allowedHeaders: corsSettings.allowedHeaders,
-    maxAge: corsSettings.maxAge,
-    optionsSuccessStatus: 204
-  });
 
   app.disable('x-powered-by');
   app.set('trust proxy', resolveTrustProxySetting());
-  app.use(corsMiddleware);
-  app.options('*', corsMiddleware);
+  app.use(
+    cors({
+      origin: corsSettings.origin,
+      credentials: corsSettings.credentials
+    })
+  );
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   app.use(securityHeadersMiddleware);
   app.use(httpsEnforcementMiddleware);
@@ -64,13 +60,6 @@ export function createApp(): ListenableAppLike {
       });
     }
 
-    if (err instanceof Error && err.message.startsWith('CORS blocked for origin')) {
-      return res.status(403).json({
-        error: 'CORS blocked',
-        message: err.message
-      });
-    }
-
     console.error('Unhandled error:', err);
     return res.status(500).json({
       error: 'Internal server error',
@@ -85,3 +74,7 @@ export function createApp(): ListenableAppLike {
 
   return app as unknown as ListenableAppLike;
 }
+
+const app = createApp();
+
+export default app;
