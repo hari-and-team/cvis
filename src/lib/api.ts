@@ -199,6 +199,7 @@ async function requestJson<T>(
 
 async function parseJsonResponse<T>(res: Response, action: string): Promise<T> {
   const text = await res.text().catch(() => '');
+  const contentType = res.headers.get('content-type') || 'unknown';
 
   if (!text.trim()) {
     throw new Error(`${action} failed: backend returned an empty response`);
@@ -207,7 +208,10 @@ async function parseJsonResponse<T>(res: Response, action: string): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error(`${action} failed: backend returned invalid JSON`);
+    const excerpt = text.replace(/\s+/g, ' ').slice(0, 180);
+    throw new Error(
+      `${action} failed: backend returned invalid JSON (content-type: ${contentType}). Response started with: ${excerpt}`
+    );
   }
 }
 

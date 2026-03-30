@@ -2,7 +2,6 @@ import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import selfsigned from 'selfsigned';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '..');
@@ -56,6 +55,18 @@ async function readExistingMetadata() {
 
 async function writeMetadata(metadata) {
   await fs.writeFile(DEV_CERT_META_PATH, `${JSON.stringify(metadata, null, 2)}\n`);
+}
+
+async function loadSelfsigned() {
+  try {
+    const mod = await import('selfsigned');
+    return mod.default ?? mod;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Missing root dependency "selfsigned", which dev TLS needs when mkcert is unavailable. Run "npm install" and retry. Original error: ${message}`
+    );
+  }
 }
 
 async function generateMkcertCertificate() {
@@ -114,6 +125,7 @@ export async function ensureDevTlsCert() {
     return generateMkcertCertificate();
   }
 
+  const selfsigned = await loadSelfsigned();
   const attrs = [{ name: 'commonName', value: 'localhost' }];
   const pems = await selfsigned.generate(attrs, {
     algorithm: 'sha256',

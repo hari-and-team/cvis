@@ -502,12 +502,13 @@
     });
   }
 
-  async function handleTrace(force = false) {
+  async function handleTrace(force: boolean | Event = false) {
     if (!browser) return;
+    const shouldForce = force === true;
 
     traceErr = null;
     traceNotice = null;
-    if (!force) {
+    if (!shouldForce) {
       traceReadiness = null;
       showTraceReadinessPrompt = false;
     }
@@ -546,7 +547,7 @@
       const result = await runTraceAction({
         code: $editorCode,
         input: traceInput,
-        force
+        force: shouldForce
       });
       traceErr = result.traceErr;
       traceReadiness = result.readiness;
