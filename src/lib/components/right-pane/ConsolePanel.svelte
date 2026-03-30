@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Code2 } from 'lucide-svelte';
   import type { ConsoleViewModel } from '$lib/app-shell/right-pane/view-models';
+  import { inertialScroll } from '$lib/shared/inertial-scroll';
   import { consumeBufferedLines, normalizeTerminalText } from '$lib/terminal/console-input';
 
   export let viewModel: ConsoleViewModel;
@@ -221,6 +222,7 @@
   {/if}
   <div
     bind:this={outputRef}
+    use:inertialScroll
     class="output-content terminal-output"
     class:terminal-active={canSendToStdin}
     role="textbox"

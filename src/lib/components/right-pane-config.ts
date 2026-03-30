@@ -1,23 +1,24 @@
-import { Bot, Eye, ListTree, Terminal } from 'lucide-svelte';
+import { Eye, ListTree, Terminal } from 'lucide-svelte';
 
-// One Dark color palette for right pane
-export const OneDark = {
+// Shared right-pane palette aligned to the local shell theme
+export const ShellPalette = {
   bgMain: '#282c34',
-  bgDeep: '#21252b',
-  bgHover: '#2c313a',
-  border: '#3e4451',
-  text: '#abb2bf',
-  textDim: '#5c6370',
-  textBright: '#e5e5e5',
-  green: '#98c379',
-  blue: '#61afef',
-  purple: '#c678dd',
-  cyan: '#56b6c2',
-  red: '#e06c75',
-  orange: '#d19a66',
+  bgDeep: '#232730',
+  bgHover: '#313643',
+  border: '#454c5d',
+  text: '#c5cbd6',
+  textDim: '#8d95a4',
+  textBright: '#e5e9f0',
+  highlight: '#b7acd8',
+  green: '#90af80',
+  blue: '#7f9fca',
+  purple: '#9181b2',
+  cyan: '#88afc1',
+  red: '#b87a86',
+  orange: '#bd9478',
 } as const;
 
-export type RightPaneTabId = 'console' | 'visualizer' | 'analysis' | 'mentor';
+export type RightPaneTabId = 'console' | 'visualizer' | 'analysis';
 
 export const RIGHT_PANE_TABS: Array<{
   id: RightPaneTabId;
@@ -25,21 +26,20 @@ export const RIGHT_PANE_TABS: Array<{
   Icon: typeof Terminal;
   color: string;
 }> = [
-  { id: 'console', label: 'Console', Icon: Terminal, color: OneDark.green },
-  { id: 'visualizer', label: 'Visualizer', Icon: Eye, color: OneDark.blue },
-  { id: 'analysis', label: 'Analysis', Icon: ListTree, color: OneDark.purple },
-  { id: 'mentor', label: 'Mentor', Icon: Bot, color: OneDark.orange }
+  { id: 'console', label: 'Console', Icon: Terminal, color: ShellPalette.highlight },
+  { id: 'visualizer', label: 'Visualizer', Icon: Eye, color: ShellPalette.highlight },
+  { id: 'analysis', label: 'Analysis', Icon: ListTree, color: ShellPalette.highlight }
 ];
 
 export const VISUALIZER_FEATURES = [
-  { label: 'Structs', color: OneDark.purple },
-  { label: 'Graph intent', color: OneDark.cyan },
-  { label: 'Linked lists', color: OneDark.blue },
-  { label: 'malloc/free', color: OneDark.red },
-  { label: 'Pointers', color: OneDark.cyan },
-  { label: 'Call stack', color: OneDark.green },
-  { label: 'Recursion', color: OneDark.orange },
-  { label: 'Arrays', color: OneDark.blue },
-  { label: 'Globals', color: OneDark.purple },
-  { label: 'switch', color: OneDark.cyan }
+  { label: 'Structs', color: ShellPalette.purple },
+  { label: 'Graph intent', color: ShellPalette.cyan },
+  { label: 'Linked lists', color: ShellPalette.blue },
+  { label: 'malloc/free', color: ShellPalette.red },
+  { label: 'Pointers', color: ShellPalette.cyan },
+  { label: 'Call stack', color: ShellPalette.green },
+  { label: 'Recursion', color: ShellPalette.orange },
+  { label: 'Arrays', color: ShellPalette.blue },
+  { label: 'Globals', color: ShellPalette.purple },
+  { label: 'switch', color: ShellPalette.cyan }
 ] as const;

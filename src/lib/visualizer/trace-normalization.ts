@@ -17,6 +17,11 @@ export interface VisualizerArrayCell {
 export interface VisualizerArray {
   name: string;
   cells: VisualizerArrayCell[];
+  totalCells: number;
+  visibleCells: number;
+  hiddenCells: number;
+  isSummarized: boolean;
+  summaryLabel: string | null;
 }
 
 export interface VisualizerLinkedNode {
@@ -189,6 +194,65 @@ function sortByName<T extends { name: string }>(items: T[]): T[] {
   return items.slice().sort((left, right) => left.name.localeCompare(right.name));
 }
 
+const LARGE_ARRAY_THRESHOLD = 80;
+const MAX_VISIBLE_ARRAY_CELLS = 48;
+
+function isDefaultArrayValue(value: unknown): boolean {
+  return value === 0 || value === null || value === undefined || value === '' || value === false;
+}
+
+function summarizeArrayCells(
+  sortedEntries: Array<[number, unknown]>
+): Pick<VisualizerArray, 'cells' | 'totalCells' | 'visibleCells' | 'hiddenCells' | 'isSummarized' | 'summaryLabel'> {
+  const totalCells = sortedEntries.length;
+
+  if (totalCells <= LARGE_ARRAY_THRESHOLD) {
+    return {
+      cells: sortedEntries.map(([idx, value]) => ({
+        idx,
+        value,
+        active: false
+      })),
+      totalCells,
+      visibleCells: totalCells,
+      hiddenCells: 0,
+      isSummarized: false,
+      summaryLabel: null
+    };
+  }
+
+  const nonDefaultEntries = sortedEntries.filter(([, value]) => !isDefaultArrayValue(value));
+  const preferredEntries =
+    nonDefaultEntries.length > 0
+      ? nonDefaultEntries
+      : sortedEntries.slice(0, Math.min(12, sortedEntries.length));
+
+  const trimmedEntries =
+    preferredEntries.length > MAX_VISIBLE_ARRAY_CELLS
+      ? preferredEntries.slice(0, MAX_VISIBLE_ARRAY_CELLS)
+      : preferredEntries;
+
+  const visibleCells = trimmedEntries.length;
+  const hiddenCells = Math.max(0, totalCells - visibleCells);
+  const summaryLabel =
+    nonDefaultEntries.length > 0
+      ? `Showing entered or changed values`
+      : `Showing the first ${visibleCells} cells`;
+
+  return {
+    cells: trimmedEntries.map(([idx, value]) => ({
+      idx,
+      value,
+      active: false
+    })),
+    totalCells,
+    visibleCells,
+    hiddenCells,
+    isSummarized: true,
+    summaryLabel
+  };
+}
+
 function parseArrays(memory: Record<string, unknown>): VisualizerArray[] {
   const arrayMap = new Map<string, Map<number, unknown>>();
 
@@ -226,16 +290,15 @@ function parseArrays(memory: Record<string, unknown>): VisualizerArray[] {
   }
 
   return sortByName(
-    Array.from(arrayMap.entries()).map(([name, values]) => ({
-      name,
-      cells: Array.from(values.entries())
-        .sort((left, right) => left[0] - right[0])
-        .map(([idx, value]) => ({
-          idx,
-          value,
-          active: false
-        }))
-    }))
+    Array.from(arrayMap.entries()).map(([name, values]) => {
+      const sortedEntries = Array.from(values.entries()).sort((left, right) => left[0] - right[0]);
+      const summary = summarizeArrayCells(sortedEntries);
+
+      return {
+        name,
+        ...summary
+      };
+    })
   );
 }
 

@@ -14,6 +14,8 @@ import type {
   RunSessionPollResult,
   RunSessionStartRequest,
   RunSessionStartResult,
+  TraceReadinessRequest,
+  TraceReadinessResult,
   TraceRequest,
   TraceResult
 } from './types';
@@ -30,6 +32,7 @@ const REQUEST_TIMEOUTS_MS: Record<string, number> = {
   compile: 20_000,
   run: 20_000,
   trace: 20_000,
+  traceReadiness: 8_000,
   analyze: 12_000,
   runStart: 10_000,
   runPoll: 6_000,
@@ -246,6 +249,14 @@ export async function traceCode(req: TraceRequest): Promise<TraceResult> {
     headers: JSON_HEADERS,
     body: JSON.stringify(req)
   }, 'Trace', REQUEST_TIMEOUTS_MS.trace);
+}
+
+export async function getTraceReadiness(req: TraceReadinessRequest): Promise<TraceReadinessResult> {
+  return requestJson<TraceReadinessResult>('/api/trace/readiness', {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify(req)
+  }, 'Trace readiness', REQUEST_TIMEOUTS_MS.traceReadiness);
 }
 
 export async function startRunSession(req: RunSessionStartRequest): Promise<RunSessionStartResult> {

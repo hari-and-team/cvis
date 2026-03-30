@@ -94,6 +94,18 @@ export function normalizeBreakpoints(breakpoints: unknown): Result<number[]> {
   return { value: [...new Set(breakpoints)] };
 }
 
+export function normalizeForce(force: unknown): Result<boolean> {
+  if (force === undefined) {
+    return { value: false };
+  }
+
+  if (typeof force !== 'boolean') {
+    return { error: '"force" must be a boolean when provided' };
+  }
+
+  return { value: force };
+}
+
 export function normalizeBinaryPath(binaryPath: unknown): Result<string> {
   if (typeof binaryPath !== 'string' || !binaryPath.trim()) {
     return { error: 'Request body must contain a non-empty string "binaryPath" field' };

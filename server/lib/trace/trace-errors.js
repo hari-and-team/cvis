@@ -5,7 +5,8 @@ export function createTraceFailure(message, options = {}) {
     steps = [],
     output = '',
     line = null,
-    phase = 'trace'
+    phase = 'trace',
+    readiness = null
   } = options;
   const limitedSteps =
     steps.length > TRACE_FAILURE_STEP_LIMIT ? steps.slice(0, TRACE_FAILURE_STEP_LIMIT) : steps;
@@ -22,7 +23,8 @@ export function createTraceFailure(message, options = {}) {
     totalSteps: limitedSteps.length,
     errors: [`${prefix}${detail}`],
     output,
-    phase
+    phase,
+    readiness
   };
 }
 
@@ -37,7 +39,7 @@ function extractLineNumber(message) {
 
 export function normalizeTraceError(error, options = {}) {
   const rawMessage = error instanceof Error ? error.message : String(error ?? 'Trace failed');
-  const line = extractLineNumber(rawMessage);
+  const line = options.line ?? extractLineNumber(rawMessage);
   const exhaustedInputLine =
     Number.isInteger(options.inputReplayExhaustedLine) ? options.inputReplayExhaustedLine : null;
 

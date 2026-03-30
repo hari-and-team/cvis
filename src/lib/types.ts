@@ -112,6 +112,30 @@ export interface TraceRequest {
   code: string;
   breakpoints?: number[];  // line numbers
   input?: string;
+  force?: boolean;
+}
+
+export type TraceReadinessStatus = 'supported' | 'partial' | 'unsupported';
+export type TraceReadinessSeverity = 'info' | 'warn' | 'block';
+
+export interface TraceReadinessRequest {
+  code: string;
+}
+
+export interface TraceReadinessReason {
+  line?: number | null;
+  severity: TraceReadinessSeverity;
+  code: string;
+  message: string;
+}
+
+export interface TraceReadinessResult {
+  success: boolean;
+  status: TraceReadinessStatus;
+  recommendedAction: 'trace' | 'compile-run';
+  reasons: TraceReadinessReason[];
+  detectedFeatures: string[];
+  traceProfile: string;
 }
 
 export interface StackFrame {
@@ -143,6 +167,9 @@ export interface TraceResult {
   steps: TraceStep[];
   totalSteps: number;
   errors: string[];
+  output?: string;
+  phase?: string;
+  readiness?: TraceReadinessResult | null;
 }
 
 // ===== INTENT ANALYSIS =====

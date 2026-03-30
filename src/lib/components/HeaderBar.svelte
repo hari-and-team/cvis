@@ -26,7 +26,7 @@
 <header class="header-bar">
   <div class="logo-section">
     <div class="logo-icon">
-      <Code2 size={18} color="#61afef" />
+      <Code2 size={18} color="currentColor" />
     </div>
     <div class="logo-text">
       <h1 class="title">C Cloud Compiler</h1>
@@ -96,7 +96,7 @@
         <Loader2 size={14} class="animate-spin" />
         <span>Running…</span>
       {:else}
-        <Play size={14} fill="#fff" />
+        <Play size={14} fill="currentColor" />
         <span>Run</span>
       {/if}
     </button>
@@ -104,28 +104,19 @@
 </header>
 
 <style>
-  /* One Dark Colors */
-  :root {
-    --od-bg-main: #282c34;
-    --od-bg-deep: #21252b;
-    --od-bg-hover: #2c313a;
-    --od-border: #3e4451;
-    --od-text: #abb2bf;
-    --od-text-dim: #5c6370;
-    --od-text-bright: #e5e5e5;
-    --od-green: #98c379;
-    --od-blue: #61afef;
-  }
-
   .header-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    background: var(--od-bg-deep);
-    border-bottom: 1px solid var(--od-border);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-deep) 94%, transparent) 0%,
+      color-mix(in srgb, var(--bg-card) 90%, transparent) 100%
+    );
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
     flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-soft);
   }
 
   /* Logo Section */
@@ -141,15 +132,16 @@
     justify-content: center;
     width: 36px;
     height: 36px;
-    background: linear-gradient(135deg, rgba(97, 175, 239, 0.15), rgba(97, 175, 239, 0.05));
-    border: 1px solid rgba(97, 175, 239, 0.2);
-    border-radius: 8px;
+    color: color-mix(in srgb, var(--lavender) 68%, var(--purple));
+    background: color-mix(in srgb, var(--bg-hover, var(--bg-raised)) 92%, transparent);
+    border: 1px solid color-mix(in srgb, var(--purple) 18%, var(--border));
+    border-radius: var(--radius-card);
     transition: all 0.2s ease;
   }
 
   .logo-icon:hover {
-    background: linear-gradient(135deg, rgba(97, 175, 239, 0.25), rgba(97, 175, 239, 0.1));
-    border-color: rgba(97, 175, 239, 0.4);
+    background: color-mix(in srgb, var(--purple) 8%, var(--bg-raised));
+    border-color: color-mix(in srgb, var(--purple) 28%, var(--border));
   }
 
   .logo-text {
@@ -162,13 +154,13 @@
     margin: 0;
     font-size: 14px;
     font-weight: 700;
-    color: var(--od-text-bright);
+    color: var(--text-bright);
     letter-spacing: 0.3px;
   }
 
   .subtitle {
     font-size: 11px;
-    color: var(--od-text-dim);
+    color: var(--text-dim);
     font-weight: 500;
   }
 
@@ -183,11 +175,11 @@
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    border: 1px solid rgba(97, 175, 239, 0.2);
-    border-radius: 12px;
-    background: rgba(40, 44, 52, 0.72);
-    color: var(--od-text-bright);
-    padding: 7px 10px;
+    border: 1px solid color-mix(in srgb, var(--selection-accent) 16%, var(--border));
+    border-radius: var(--radius-card);
+    background: color-mix(in srgb, var(--bg-card) 86%, transparent);
+    color: var(--text-bright);
+    padding: 8px 11px;
     cursor: pointer;
     min-width: 0;
   }
@@ -205,12 +197,12 @@
   .profile-chip-icon {
     width: 30px;
     height: 30px;
-    border-radius: 10px;
+    border-radius: var(--radius-control);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: rgba(97, 175, 239, 0.14);
-    color: #8ecbff;
+    background: color-mix(in srgb, var(--selection-accent) 12%, transparent);
+    color: color-mix(in srgb, var(--lavender) 70%, var(--text-bright));
     flex-shrink: 0;
   }
 
@@ -224,7 +216,7 @@
   .profile-chip-name {
     font-size: 11px;
     font-weight: 700;
-    color: var(--od-text-bright);
+    color: var(--text-bright);
     max-width: 180px;
     white-space: nowrap;
     overflow: hidden;
@@ -233,7 +225,7 @@
 
   .profile-chip-meta {
     font-size: 10px;
-    color: var(--od-text-dim);
+    color: var(--text-dim);
     text-transform: capitalize;
     max-width: 220px;
     white-space: nowrap;
@@ -242,7 +234,7 @@
   }
 
   .profile-chip-link {
-    color: var(--od-blue);
+    color: color-mix(in srgb, var(--lavender) 66%, var(--purple));
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -253,14 +245,15 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 14px;
-    border-radius: 6px;
+    padding: 10px 15px;
+    border-radius: var(--radius-control);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
     transition: all 0.2s ease;
-    border: none;
+    border: 1px solid transparent;
     outline: none;
+    box-shadow: var(--shadow-soft);
   }
 
   .btn span {
@@ -268,61 +261,51 @@
   }
 
   .btn-secondary {
-    background: linear-gradient(135deg, #61afef, #4b97d6);
-    color: #f7fbff;
-    box-shadow:
-      0 2px 8px rgba(97, 175, 239, 0.22),
-      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    background: color-mix(in srgb, var(--blue) 10%, var(--bg-raised));
+    border-color: color-mix(in srgb, var(--blue) 26%, var(--border));
+    color: var(--text-bright);
   }
 
   .btn-secondary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #74bbf4, #58a3e1);
-    box-shadow:
-      0 4px 12px rgba(97, 175, 239, 0.32),
-      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    background: color-mix(in srgb, var(--blue) 14%, var(--bg-raised));
     transform: translateY(-1px);
   }
 
   .btn-secondary:active:not(:disabled) {
     transform: translateY(0);
     box-shadow:
-      0 1px 4px rgba(97, 175, 239, 0.18),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      0 1px 4px rgba(40, 52, 69, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .btn-secondary.loading {
-    background: linear-gradient(135deg, #4b97d6, #3b7fb8);
+    background: color-mix(in srgb, var(--blue) 9%, var(--bg-raised));
     cursor: not-allowed;
     opacity: 0.9;
   }
 
   /* Primary Button - Run */
   .btn-primary {
-    background: linear-gradient(135deg, #98c379, #7eb35d);
-    color: #1e2127;
+    background: color-mix(in srgb, var(--green) 14%, var(--bg-raised));
+    border-color: color-mix(in srgb, var(--green) 24%, var(--border));
+    color: color-mix(in srgb, var(--green) 60%, var(--text-bright));
     font-weight: 700;
-    box-shadow: 
-      0 2px 8px rgba(152, 195, 121, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #a8d089, #8ec36d);
-    box-shadow: 
-      0 4px 12px rgba(152, 195, 121, 0.35),
-      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    background: color-mix(in srgb, var(--green) 18%, var(--bg-raised));
     transform: translateY(-1px);
   }
 
   .btn-primary:active:not(:disabled) {
     transform: translateY(0);
     box-shadow: 
-      0 1px 4px rgba(152, 195, 121, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      0 1px 4px rgba(43, 58, 37, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .btn-primary.running {
-    background: linear-gradient(135deg, #7eb35d, #6a9b4d);
+    background: color-mix(in srgb, var(--green) 12%, var(--bg-raised));
     cursor: not-allowed;
     opacity: 0.85;
   }

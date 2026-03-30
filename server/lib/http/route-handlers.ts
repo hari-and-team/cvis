@@ -9,7 +9,7 @@ import {
   startRunSession,
   stopRunSession
 } from '../run-session.js';
-import { traceExecution } from '../c-interpreter.js';
+import { assessTraceReadiness, traceExecution } from '../c-interpreter.js';
 import { analyzeProgramIntent } from '../program-intent-ml.js';
 import { runtimeCapabilities, supportsInteractiveRunSessions } from '../runtime-capabilities.js';
 import type { RequestLike, ResponseLike } from './http-types.ts';
@@ -19,6 +19,7 @@ import {
   normalizeArgs,
   normalizeBinaryPath,
   normalizeBreakpoints,
+  normalizeForce,
   normalizeInput,
   normalizeJsonBody,
   validateCode
@@ -329,7 +330,7 @@ export async function traceHandler(req: RequestLike, res: ResponseLike) {
     return res.status(400).json(traceValidationResponse(bodyResult.error));
   }
 
-  const { code, breakpoints, input } = bodyResult.value;
+  const { code, breakpoints, input, force } = bodyResult.value;
   const codeError = validateCode(code);
   if (codeError) {
     return res.status(400).json(traceValidationResponse(codeError, 'No code provided'));
@@ -349,6 +350,11 @@ export async function traceHandler(req: RequestLike, res: ResponseLike) {
       .json(traceValidationResponse(inputResult.error, 'Invalid trace input'));
   }
 
+  const forceResult = normalizeForce(force);
+  if ('error' in forceResult) {
+    return res.status(400).json(traceValidationResponse(forceResult.error, 'Invalid force flag'));
+  }
+
   const maxLine = sourceCode.split(/\r?\n/).length;
   const outOfRangeBreakpoint = breakpointResult.value.find((lineNo) => lineNo > maxLine);
   if (outOfRangeBreakpoint) {
@@ -360,11 +366,33 @@ export async function traceHandler(req: RequestLike, res: ResponseLike) {
   console.log(`Tracing code with ${breakpointResult.value.length} breakpoints...`);
 
   try {
-    const result = await traceExecution(sourceCode, breakpointResult.value, inputResult.value);
+    const result = await traceExecution(sourceCode, breakpointResult.value, inputResult.value, {
+      force: forceResult.value
+    });
     console.log(`✓ Trace complete: ${result.totalSteps} steps`);
     return res.json(result);
   } catch (err) {
     console.error('Trace error:', err);
+    return res.status(500).json(traceServerErrorResponse(getErrorMessage(err)));
+  }
+}
+
+export function traceReadinessHandler(req: RequestLike, res: ResponseLike) {
+  const bodyResult = normalizeJsonBody(req.body);
+  if ('error' in bodyResult) {
+    return res.status(400).json(traceValidationResponse(bodyResult.error));
+  }
+
+  const { code } = bodyResult.value;
+  const codeError = validateCode(code);
+  if (codeError) {
+    return res.status(400).json(traceValidationResponse(codeError, 'No code provided'));
+  }
+
+  try {
+    return res.json(assessTraceReadiness(code as string));
+  } catch (err) {
+    console.error('Trace readiness error:', err);
     return res.status(500).json(traceServerErrorResponse(getErrorMessage(err)));
   }
 }

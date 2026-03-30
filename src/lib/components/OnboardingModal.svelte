@@ -187,22 +187,26 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(14, 17, 22, 0.72);
-    backdrop-filter: blur(10px);
+    background: rgba(13, 15, 19, 0.76);
+    backdrop-filter: blur(8px);
   }
 
   .onboarding-modal {
     width: min(720px, 100%);
     max-height: min(92vh, 860px);
     overflow: auto;
-    border-radius: 18px;
-    border: 1px solid rgba(97, 175, 239, 0.16);
+    border-radius: var(--radius-panel);
+    border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
     background:
-      radial-gradient(circle at top right, rgba(97, 175, 239, 0.12), transparent 34%),
-      linear-gradient(180deg, rgba(33, 37, 43, 0.98), rgba(40, 44, 52, 0.98));
-    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+      radial-gradient(circle at top right, color-mix(in srgb, var(--selection-accent) 8%, transparent), transparent 32%),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--bg-card) 97%, transparent) 0%,
+        color-mix(in srgb, var(--bg-deep) 92%, var(--bg-card)) 100%
+      );
+    box-shadow: var(--shadow-lift);
     padding: 24px;
-    color: #e5e5e5;
+    color: var(--text-bright);
   }
 
   .onboarding-header h2 {
@@ -213,13 +217,13 @@
 
   .onboarding-header p {
     margin: 0;
-    color: rgba(229, 229, 229, 0.78);
+    color: color-mix(in srgb, var(--text-mid) 82%, var(--text-dim));
     font-size: 14px;
     line-height: 1.6;
   }
 
   .onboarding-kicker {
-    color: #61afef;
+    color: color-mix(in srgb, var(--lavender) 64%, var(--purple));
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.14em;
@@ -241,24 +245,24 @@
   }
 
   .field-label {
-    color: rgba(229, 229, 229, 0.82);
+    color: color-mix(in srgb, var(--text-bright) 84%, var(--text-dim));
     font-size: 12px;
     font-weight: 700;
   }
 
   .field-input {
-    border: 1px solid rgba(92, 99, 112, 0.6);
-    border-radius: 12px;
-    background: rgba(12, 14, 18, 0.42);
-    color: #f3f6fb;
+    border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--bg-deep) 96%, transparent);
+    color: var(--text-bright);
     padding: 12px 14px;
     font-size: 13px;
     outline: none;
   }
 
   .field-input:focus {
-    border-color: rgba(97, 175, 239, 0.72);
-    box-shadow: 0 0 0 3px rgba(97, 175, 239, 0.14);
+    border-color: color-mix(in srgb, var(--selection-accent) 42%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--selection-accent) 12%, transparent);
   }
 
   .role-grid {
@@ -269,21 +273,21 @@
   }
 
   .role-card {
-    border: 1px solid rgba(92, 99, 112, 0.58);
-    border-radius: 14px;
-    background: rgba(18, 21, 27, 0.56);
+    border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+    border-radius: var(--radius-card);
+    background: color-mix(in srgb, var(--bg-raised) 90%, transparent);
     padding: 14px;
     text-align: left;
     cursor: pointer;
-    color: #e5e5e5;
+    color: var(--text-bright);
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
   .role-card-active {
-    border-color: rgba(209, 154, 102, 0.78);
-    background: rgba(209, 154, 102, 0.12);
+    border-color: color-mix(in srgb, var(--selection-accent) 34%, var(--border));
+    background: color-mix(in srgb, var(--selection-accent) 8%, var(--bg-raised));
   }
 
   .role-label {
@@ -292,24 +296,24 @@
   }
 
   .role-hint {
-    color: rgba(229, 229, 229, 0.72);
+    color: color-mix(in srgb, var(--text-mid) 80%, var(--text-dim));
     font-size: 11px;
     line-height: 1.6;
   }
 
   .onboarding-note {
     margin-top: 14px;
-    color: rgba(171, 178, 191, 0.86);
+    color: color-mix(in srgb, var(--text-mid) 84%, var(--text-dim));
     font-size: 11px;
     line-height: 1.6;
   }
 
   .onboarding-error {
     margin-top: 14px;
-    border: 1px solid rgba(224, 108, 117, 0.38);
-    background: rgba(224, 108, 117, 0.12);
-    color: #f5b1b6;
-    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--red) 36%, var(--border));
+    background: color-mix(in srgb, var(--red) 10%, var(--bg-raised));
+    color: color-mix(in srgb, var(--red) 68%, white 32%);
+    border-radius: var(--radius-card);
     padding: 10px 12px;
     font-size: 12px;
   }
@@ -322,8 +326,8 @@
   }
 
   .action-btn {
-    border: none;
-    border-radius: 999px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
     padding: 10px 16px;
     font-size: 12px;
     font-weight: 700;
@@ -331,13 +335,15 @@
   }
 
   .action-btn-primary {
-    background: linear-gradient(135deg, #61afef, #7ec8f6);
-    color: #0f141c;
+    background: color-mix(in srgb, var(--selection-accent) 12%, var(--bg-raised));
+    border-color: color-mix(in srgb, var(--selection-accent) 26%, var(--border));
+    color: var(--text-bright);
   }
 
   .action-btn-secondary {
-    background: rgba(92, 99, 112, 0.26);
-    color: #e5e5e5;
+    background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+    border-color: color-mix(in srgb, var(--border) 88%, transparent);
+    color: var(--text-bright);
   }
 
   @media (max-width: 720px) {

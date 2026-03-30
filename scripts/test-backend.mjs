@@ -1,4 +1,13 @@
-const API_BASE = process.env.CVIS_API_BASE ?? 'http://localhost:3001';
+import { TRACE_FIXTURES } from './trace-fixtures.mjs';
+
+const EXPLICIT_API_BASE = process.env.CVIS_API_BASE?.trim() || null;
+const DEFAULT_API_BASE_CANDIDATES = [
+  'https://127.0.0.1:3001',
+  'https://localhost:3001',
+  'http://127.0.0.1:3001',
+  'http://localhost:3001'
+];
+let API_BASE = EXPLICIT_API_BASE;
 
 function log(message = '') {
   console.log(message);
@@ -24,10 +33,42 @@ async function getJson(url, init) {
   return { res, body };
 }
 
+async function canReach(url) {
+  try {
+    const res = await fetch(url, {
+      method: 'GET'
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveApiBase() {
+  if (EXPLICIT_API_BASE) {
+    return EXPLICIT_API_BASE;
+  }
+
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+  for (const base of DEFAULT_API_BASE_CANDIDATES) {
+    if (await canReach(`${base}/health`)) {
+      return base;
+    }
+  }
+
+  throw new Error(
+    'Could not reach a local backend for tests. Start the backend with `npm run dev:all` or set CVIS_API_BASE explicitly.'
+  );
+}
+
 async function main() {
+  API_BASE = await resolveApiBase();
   log('═══════════════════════════════════════════════');
   log('  Backend API Test Suite');
   log('═══════════════════════════════════════════════');
+  log('');
+  log(`Using backend: ${API_BASE}`);
   log('');
 
   log('Test 1: Health check');
@@ -264,7 +305,135 @@ async function main() {
   log('✓ Typedef-based binary tree trace now succeeds');
   log('');
 
-  log('Test 14: Reject unsafe binary path');
+  log('Test 14: Trace preserves Node** tree mutations');
+  const pointerTreeTrace = await getJson(`${API_BASE}/api/trace`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code:
+        'typedef struct Node {\n' +
+        '  int data;\n' +
+        '  struct Node* left;\n' +
+        '  struct Node* right;\n' +
+        '} Node;\n\n' +
+        'Node* createNode(int data) {\n' +
+        '  Node* node = (Node*)malloc(sizeof(Node));\n' +
+        '  node->data = data;\n' +
+        '  node->left = NULL;\n' +
+        '  node->right = NULL;\n' +
+        '  return node;\n' +
+        '}\n\n' +
+        'void insert(Node** root, int data) {\n' +
+        '  Node* node = createNode(data);\n' +
+        '  if (*root == NULL) {\n' +
+        '    *root = node;\n' +
+        '    return;\n' +
+        '  }\n' +
+        '  if ((*root)->left == NULL) {\n' +
+        '    (*root)->left = node;\n' +
+        '    return;\n' +
+        '  }\n' +
+        '  (*root)->right = node;\n' +
+        '}\n\n' +
+        'Node* search(Node* root, int data) {\n' +
+        '  if (root == NULL) return NULL;\n' +
+        '  if (root->data == data) return root;\n' +
+        '  if (root->left != NULL && root->left->data == data) return root->left;\n' +
+        '  if (root->right != NULL && root->right->data == data) return root->right;\n' +
+        '  return NULL;\n' +
+        '}\n\n' +
+        'int main() {\n' +
+        '  Node* root = NULL;\n' +
+        '  insert(&root, 10);\n' +
+        '  insert(&root, 20);\n' +
+        '  insert(&root, 30);\n' +
+        '  Node* found = search(root, 30);\n' +
+        '  if (found != NULL) {\n' +
+        '    printf("found %d\\n", found->data);\n' +
+        '  }\n' +
+        '  return 0;\n' +
+        '}\n'
+    })
+  });
+  log(JSON.stringify({
+    success: pointerTreeTrace.body?.success,
+    totalSteps: pointerTreeTrace.body?.totalSteps,
+    errors: pointerTreeTrace.body?.errors,
+    output: pointerTreeTrace.body?.output
+  }, null, 2));
+  assert(pointerTreeTrace.body?.success === true, 'Node** tree trace should succeed');
+  const pointerTreeRuntime = pointerTreeTrace.body?.steps?.at(-1)?.runtime ?? {};
+  const pointerTreeRoot = pointerTreeRuntime?.frames?.[0]?.locals?.root ?? 0;
+  const pointerTreeHeap = pointerTreeRuntime?.heap ?? {};
+  assert(pointerTreeRoot !== 0, 'Node** tree trace should preserve the caller root pointer');
+  assert(pointerTreeHeap[String(pointerTreeRoot)]?.left, 'Node** tree trace should link the left child');
+  assert(pointerTreeHeap[String(pointerTreeRoot)]?.right, 'Node** tree trace should link the right child');
+  assert((pointerTreeTrace.body?.output || '').includes('found 30'), 'Node** tree trace should preserve searchable child nodes');
+  log('✓ Node** tree mutations now propagate through trace');
+  log('');
+
+  log('Test 15: Trace readiness fixture corpus');
+  for (const fixture of TRACE_FIXTURES) {
+    const readiness = await getJson(`${API_BASE}/api/trace/readiness`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: fixture.code })
+    });
+
+    assert(readiness.res.ok, `Trace readiness should succeed for fixture ${fixture.id}`);
+    assert(
+      readiness.body?.status === fixture.readiness,
+      `Fixture ${fixture.id} should be ${fixture.readiness}, got ${readiness.body?.status}`
+    );
+
+    if (fixture.readiness === 'supported') {
+      const traceFixture = await getJson(`${API_BASE}/api/trace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: fixture.code,
+          input: fixture.input ?? ''
+        })
+      });
+
+      assert(traceFixture.body?.success === true, `Supported fixture ${fixture.id} should trace successfully`);
+    } else {
+      const compileFixture = await getJson(`${API_BASE}/api/compile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: fixture.code })
+      });
+
+      assert(compileFixture.body?.success === true, `Fixture ${fixture.id} should still compile for exact execution`);
+
+      if (fixture.readiness === 'unsupported') {
+        const blockedTrace = await getJson(`${API_BASE}/api/trace`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: fixture.code })
+        });
+
+        assert(blockedTrace.body?.success === false, `Unsupported fixture ${fixture.id} should be blocked before trace`);
+        assert(
+          blockedTrace.body?.readiness?.status === 'unsupported',
+          `Unsupported fixture ${fixture.id} should report unsupported readiness`
+        );
+
+        const forcedTrace = await getJson(`${API_BASE}/api/trace`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: fixture.code, force: true })
+        });
+
+        assert(forcedTrace.body?.success === false, `Forced trace for ${fixture.id} should still fail cleanly`);
+      }
+    }
+
+    log(`✓ Fixture ${fixture.id}: ${fixture.label} -> ${fixture.readiness}`);
+  }
+  log('');
+
+  log('Test 16: Reject unsafe binary path');
   const unsafe = await getJson(`${API_BASE}/api/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

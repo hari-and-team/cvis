@@ -29,17 +29,26 @@
     runSessionId,
     userProfile
   } from '$lib/stores';
-  import type { UserProfile } from '$lib/types';
+  import type { TraceReadinessResult, UserProfile } from '$lib/types';
 
   let isTracing = false;
   let traceErr: string | null = null;
   let traceNotice: string | null = null;
+  let traceReadiness: TraceReadinessResult | null = null;
+  let showTraceReadinessPrompt = false;
   let persistenceReady = false;
   let persistTimer: number | null = null;
   let lastEditorCodeSnapshot = '';
   let lastPersistedDraftRaw = '';
   let competingDraft: PersistedDraft | null = null;
   let competingDraftSavedAtLabel = '';
+  let mainRef: HTMLDivElement | null = null;
+  let isResizingPanels = false;
+  let editorPaneWidthPercent = 50;
+
+  const LAYOUT_SPLIT_STORAGE_KEY = 'cvis:layout:editor-width:v1';
+  const MIN_EDITOR_WIDTH_PX = 360;
+  const MIN_RIGHT_PANE_WIDTH_PX = 360;
 
   const DRAFT_STORAGE_KEY = 'cvis:draft:v1';
   const DRAFT_BACKUP_STORAGE_KEY = 'cvis:draft:backup:v1';
@@ -47,7 +56,7 @@
 
   interface PersistedDraft {
     code: string;
-    rightPaneTab: 'console' | 'visualizer' | 'analysis' | 'mentor';
+    rightPaneTab: 'console' | 'visualizer' | 'analysis';
     mentorSelectionMode: 'guided' | 'manual';
     selectedPracticeProblemId: string | null;
     activeMilestoneIndex: number;
@@ -163,6 +172,111 @@
     }
   }
 
+  function clampEditorPaneWidth(percent: number) {
+    if (!mainRef) {
+      return Math.max(35, Math.min(65, percent));
+    }
+
+    const containerWidth = mainRef.clientWidth;
+    if (containerWidth <= 0) {
+      return Math.max(35, Math.min(65, percent));
+    }
+
+    const minPercent = (MIN_EDITOR_WIDTH_PX / containerWidth) * 100;
+    const maxPercent = 100 - (MIN_RIGHT_PANE_WIDTH_PX / containerWidth) * 100;
+
+    return Math.max(minPercent, Math.min(maxPercent, percent));
+  }
+
+  function persistLayoutSplit() {
+    if (!browser) return;
+
+    try {
+      localStorage.setItem(LAYOUT_SPLIT_STORAGE_KEY, String(editorPaneWidthPercent));
+    } catch (err) {
+      console.error('Failed to persist layout split:', err);
+    }
+  }
+
+  function restoreLayoutSplit() {
+    if (!browser) return;
+
+    try {
+      const raw = localStorage.getItem(LAYOUT_SPLIT_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) return;
+      editorPaneWidthPercent = clampEditorPaneWidth(parsed);
+    } catch (err) {
+      console.error('Failed to restore layout split:', err);
+    }
+  }
+
+  function resizeFromPointer(clientX: number) {
+    if (!mainRef) return;
+
+    const bounds = mainRef.getBoundingClientRect();
+    const relativeX = clientX - bounds.left;
+    const nextPercent = (relativeX / bounds.width) * 100;
+    editorPaneWidthPercent = clampEditorPaneWidth(nextPercent);
+  }
+
+  function stopPanelResize() {
+    if (!browser || !isResizingPanels) return;
+
+    isResizingPanels = false;
+    window.removeEventListener('pointermove', handlePanelResizeMove);
+    window.removeEventListener('pointerup', stopPanelResize);
+    window.removeEventListener('pointercancel', stopPanelResize);
+    persistLayoutSplit();
+  }
+
+  function handlePanelResizeMove(event: PointerEvent) {
+    resizeFromPointer(event.clientX);
+  }
+
+  function startPanelResize(event: PointerEvent) {
+    if (!browser || !mainRef) return;
+    if (window.innerWidth <= 960) return;
+
+    event.preventDefault();
+    isResizingPanels = true;
+    resizeFromPointer(event.clientX);
+    window.addEventListener('pointermove', handlePanelResizeMove);
+    window.addEventListener('pointerup', stopPanelResize);
+    window.addEventListener('pointercancel', stopPanelResize);
+  }
+
+  function resetPanelResize() {
+    editorPaneWidthPercent = 50;
+    persistLayoutSplit();
+  }
+
+  function handleResizerKeydown(event: KeyboardEvent) {
+    if (window.innerWidth <= 960) return;
+
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      editorPaneWidthPercent = clampEditorPaneWidth(editorPaneWidthPercent - 2);
+      persistLayoutSplit();
+      return;
+    }
+
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      editorPaneWidthPercent = clampEditorPaneWidth(editorPaneWidthPercent + 2);
+      persistLayoutSplit();
+      return;
+    }
+
+    if (event.key === 'Home') {
+      event.preventDefault();
+      editorPaneWidthPercent = clampEditorPaneWidth(50);
+      persistLayoutSplit();
+    }
+  }
+
   function parseDraft(raw: string | null): PersistedDraft | null {
     if (!raw) return null;
 
@@ -170,12 +284,14 @@
       const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
       if (!parsed || typeof parsed !== 'object') return null;
       if (typeof parsed.code !== 'string') return null;
-      if (!['console', 'visualizer', 'analysis', 'mentor'].includes(String(parsed.rightPaneTab))) return null;
+      const parsedRightPaneTab = String(parsed.rightPaneTab);
+      const normalizedRightPaneTab = parsedRightPaneTab === 'mentor' ? 'analysis' : parsedRightPaneTab;
+      if (!['console', 'visualizer', 'analysis'].includes(normalizedRightPaneTab)) return null;
       if (!['guided', 'manual'].includes(String(parsed.mentorSelectionMode ?? 'guided'))) return null;
 
       return {
         code: parsed.code,
-        rightPaneTab: parsed.rightPaneTab as PersistedDraft['rightPaneTab'],
+        rightPaneTab: normalizedRightPaneTab as PersistedDraft['rightPaneTab'],
         mentorSelectionMode: parsed.mentorSelectionMode as PersistedDraft['mentorSelectionMode'] ?? 'guided',
         selectedPracticeProblemId:
           typeof parsed.selectedPracticeProblemId === 'string' ? parsed.selectedPracticeProblemId : null,
@@ -292,6 +408,7 @@
   onMount(() => {
     restoreProfileFromStorage();
     restoreDraftFromStorage();
+    restoreLayoutSplit();
     lastEditorCodeSnapshot = $editorCode;
     persistenceReady = true;
     window.addEventListener('storage', handleStorageConflict);
@@ -304,6 +421,7 @@
     if (persistTimer !== null) {
       clearTimeout(persistTimer);
     }
+    stopPanelResize();
     if (browser && persistenceReady) {
       persistDraftToStorage();
     }
@@ -330,6 +448,8 @@
     lastRunInputTranscript.set('');
     traceErr = null;
     traceNotice = null;
+    traceReadiness = null;
+    showTraceReadinessPrompt = false;
   }
 
   $: floatingVisualizerViewModel = buildVisualizerViewModel({
@@ -344,7 +464,9 @@
     currentTraceStepData: $traceSteps[$currentStepIndex] ?? null,
     isTracing,
     traceErr,
-    traceNotice
+    traceNotice,
+    traceReadiness,
+    showTraceReadinessPrompt
   });
 
   function resetTraceUiState() {
@@ -353,6 +475,8 @@
     isPlaying.set(false);
     traceErr = null;
     traceNotice = null;
+    traceReadiness = null;
+    showTraceReadinessPrompt = false;
   }
 
   async function handleCompile() {
@@ -361,7 +485,7 @@
     resetTraceUiState();
     rightPaneTab.set('console');
 
-    await runCompileAction({
+    return runCompileAction({
       code: $editorCode
     });
   }
@@ -378,11 +502,15 @@
     });
   }
 
-  async function handleTrace() {
+  async function handleTrace(force = false) {
     if (!browser) return;
 
     traceErr = null;
     traceNotice = null;
+    if (!force) {
+      traceReadiness = null;
+      showTraceReadinessPrompt = false;
+    }
     isPlaying.set(false);
     rightPaneTab.set('visualizer');
 
@@ -417,12 +545,30 @@
     try {
       const result = await runTraceAction({
         code: $editorCode,
-        input: traceInput
+        input: traceInput,
+        force
       });
       traceErr = result.traceErr;
+      traceReadiness = result.readiness;
+      showTraceReadinessPrompt = Boolean(
+        result.readiness && result.readiness.status !== 'supported' && !result.didTrace
+      );
     } finally {
       isTracing = false;
     }
+  }
+
+  async function handleCompileAndRunExact() {
+    if (!browser) return;
+
+    const compileSucceeded = await handleCompile();
+    if (compileSucceeded) {
+      await handleRun();
+    }
+  }
+
+  function handleDismissTraceReadiness() {
+    showTraceReadinessPrompt = false;
   }
 
   function handleProfileSave(event: CustomEvent<{ profile: UserProfile }>) {
@@ -468,20 +614,47 @@
       </div>
     </div>
   {/if}
-  <div class="main">
-    <div class="workspace-column">
-      <EditorPane />
-      <div class="execution-dock">
-        <TraceControlDock viewModel={floatingVisualizerViewModel} onTrace={handleTrace} />
+  <div
+    bind:this={mainRef}
+    class="main"
+    class:resizing={isResizingPanels}
+    style="--editor-pane-width: {editorPaneWidthPercent}%; --right-pane-width: {100 - editorPaneWidthPercent}%;"
+  >
+    <div class="pane-shell editor-shell">
+      <div class="workspace-column">
+        <EditorPane />
+        <div class="execution-dock">
+          <TraceControlDock viewModel={floatingVisualizerViewModel} onTrace={handleTrace} />
+        </div>
       </div>
     </div>
-    <RightPane
-      traceSteps={$traceSteps}
-      currentStep={$currentStepIndex}
-      {isTracing}
-      {traceErr}
-      {traceNotice}
-    />
+
+    <button
+      type="button"
+      class="pane-resizer"
+      aria-label="Resize editor and right panel"
+      title="Drag to resize panels. Double-click to reset."
+      on:pointerdown={startPanelResize}
+      on:dblclick={resetPanelResize}
+      on:keydown={handleResizerKeydown}
+    >
+      <span class="pane-resizer-grip"></span>
+    </button>
+
+    <div class="pane-shell right-shell">
+      <RightPane
+        on:trace={(event) => handleTrace(event.detail?.force === true)}
+        on:runexact={handleCompileAndRunExact}
+        on:dismisstracereadiness={handleDismissTraceReadiness}
+        traceSteps={$traceSteps}
+        currentStep={$currentStepIndex}
+        {isTracing}
+        {traceErr}
+        {traceNotice}
+        {traceReadiness}
+        {showTraceReadinessPrompt}
+      />
+    </div>
   </div>
   <slot />
 </div>
@@ -507,11 +680,25 @@
     flex: 1;
     overflow: hidden;
     min-height: 0;
+    min-width: 0;
+  }
+
+  .main.resizing,
+  .main.resizing * {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  .pane-shell {
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
   }
 
   .workspace-column {
-    width: 50%;
+    width: 100%;
     min-width: 0;
+    height: 100%;
     display: flex;
     flex-direction: column;
     background: #282c34;
@@ -526,6 +713,59 @@
     background:
       linear-gradient(180deg, rgba(40, 44, 52, 0.96) 0%, rgba(33, 37, 43, 0.98) 100%);
     border-top: 1px solid rgba(92, 99, 112, 0.45);
+  }
+
+  .editor-shell {
+    flex: 0 0 var(--editor-pane-width);
+    min-width: 360px;
+  }
+
+  .right-shell {
+    flex: 0 0 var(--right-pane-width);
+    min-width: 360px;
+  }
+
+  .pane-resizer {
+    position: relative;
+    flex: 0 0 12px;
+    border: none;
+    padding: 0;
+    background: color-mix(in srgb, var(--bg-deep) 98%, transparent);
+    border-left: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+    cursor: col-resize;
+  }
+
+  .pane-resizer::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--blue) 6%, transparent) 0%,
+      transparent 100%
+    );
+    opacity: 0;
+    transition: opacity 0.18s ease;
+  }
+
+  .pane-resizer:hover::before,
+  .main.resizing .pane-resizer::before {
+    opacity: 1;
+  }
+
+  .pane-resizer-grip {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 4px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text-dim) 72%, var(--border));
+    box-shadow:
+      -3px 0 0 color-mix(in srgb, var(--text-dim) 40%, transparent),
+      3px 0 0 color-mix(in srgb, var(--text-dim) 40%, transparent);
   }
 
   .draft-conflict-banner {
@@ -566,7 +806,7 @@
 
   .draft-conflict-btn {
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-control);
     padding: 8px 12px;
     font-size: 11px;
     font-weight: 700;
@@ -617,6 +857,28 @@
 
     .draft-conflict-btn {
       flex: 1;
+    }
+  }
+
+  @media (max-width: 960px) {
+    .main {
+      flex-direction: column;
+    }
+
+    .editor-shell,
+    .right-shell {
+      min-width: 0;
+      flex: 1 1 auto;
+      width: 100%;
+    }
+
+    .workspace-column {
+      border-right: none;
+      border-bottom: 1px solid #3e4451;
+    }
+
+    .pane-resizer {
+      display: none;
     }
   }
 </style>

@@ -1,6 +1,14 @@
 import type { UnifiedAnalysisResult } from '$lib/analysis/unified-analysis';
 import { buildMentorViewModel, type MentorViewModel } from '$lib/mentor/view-model';
-import type { AnalyzeIntentResult, CompileResult, ExecutionResult, TraceStep, UserProfile } from '$lib/types';
+import type { PracticeRecommendation } from '$lib/analysis/code-type-finder';
+import type {
+  AnalyzeIntentResult,
+  CompileResult,
+  ExecutionResult,
+  TraceReadinessResult,
+  TraceStep,
+  UserProfile
+} from '$lib/types';
 import { predictProgramIntent } from '$lib/visualizer/program-intent';
 
 export interface ConsoleViewModel {
@@ -27,6 +35,8 @@ export interface VisualizerViewModel {
   traceConsoleStatus: string;
   isTracing: boolean;
   traceErr: string | null;
+  traceReadiness: TraceReadinessResult | null;
+  showTraceReadinessPrompt: boolean;
   traceSteps: TraceStep[];
   currentTraceStepData: TraceStep | null;
   loadingSteps: string[];
@@ -48,9 +58,37 @@ export interface IntentExplainerViewModel {
   sourceLabel: string;
 }
 
+export interface AnalysisImprovementItem {
+  id: string;
+  title: string;
+  location: string | null;
+  detail: string;
+  recommendation: string;
+  severity: 'info' | 'watch' | 'risk';
+}
+
+export interface AnalysisPracticeSummaryViewModel {
+  recommendation: PracticeRecommendation | null;
+  selectionSummary: string;
+  completionPercent: number;
+  currentMilestone: string | null;
+  hint: string | null;
+  queueCount: number;
+  alternateRecommendations: PracticeRecommendation[];
+}
+
 export interface AnalysisViewModel {
   status: 'empty' | 'ready';
   report: UnifiedAnalysisResult;
+  primaryTypeLabel: string;
+  identityExplanation: string;
+  identityEvidence: string[];
+  focusSectionLabel: string | null;
+  implementationStyle: string | null;
+  accessPattern: string | null;
+  confidencePercent: number;
+  improvementItems: AnalysisImprovementItem[];
+  practiceSummary: AnalysisPracticeSummaryViewModel;
   hasDetectedDsa: boolean;
   hasDetectedAlgorithms: boolean;
   dominantAnalysisSection: UnifiedAnalysisResult['staticReport']['sections'][number] | null;
@@ -209,6 +247,107 @@ function pickDominantSection(
   })[0] ?? sections[0] ?? null;
 }
 
+function formatSectionTitle(title: string): string {
+  if (title === 'Program' || title === 'Global Scope') {
+    return title;
+  }
+
+  return title.endsWith('()') ? title : `${title}()`;
+}
+
+function buildIdentityExplanation(
+  analysis: UnifiedAnalysisResult,
+  dominantSection: UnifiedAnalysisResult['staticReport']['sections'][number] | null
+): string {
+  const detailBits: string[] = [];
+
+  if (analysis.implementationStyle) {
+    detailBits.push(analysis.implementationStyle.toLowerCase());
+  }
+
+  if (analysis.accessPattern) {
+    detailBits.push(`${analysis.accessPattern} behavior`);
+  }
+
+  if (dominantSection) {
+    detailBits.push(`the strongest signal is in ${formatSectionTitle(dominantSection.title)}`);
+  }
+
+  if (detailBits.length === 0) {
+    return `The code most likely uses ${analysis.primaryType} based on the current structure and execution signals.`;
+  }
+
+  return `The code most likely uses ${analysis.primaryType} because ${detailBits.join(', ')}.`;
+}
+
+function buildImprovementItems(analysis: UnifiedAnalysisResult): AnalysisImprovementItem[] {
+  const fromSections: AnalysisImprovementItem[] = analysis.reverseReport.sectionReviews
+    .filter((review) => review.verdict !== 'keep')
+    .map((review) => ({
+      id: review.id,
+      title: review.title,
+      location: review.location,
+      detail: review.purpose,
+      recommendation: review.recommendation,
+      severity: review.verdict === 'refactor' ? 'risk' : 'watch'
+    }));
+
+  const fromSafety: AnalysisImprovementItem[] = analysis.reverseReport.safetyFindings.map((finding) => ({
+    id: finding.id,
+    title: finding.title,
+    location: null,
+    detail: finding.detail,
+    recommendation: finding.recommendation,
+    severity: finding.severity
+  }));
+
+  const fromOptimization: AnalysisImprovementItem[] = analysis.reverseReport.optimizationFindings.map((finding) => ({
+    id: finding.id,
+    title: finding.title,
+    location: null,
+    detail: finding.detail,
+    recommendation: finding.recommendation,
+    severity: finding.severity
+  }));
+
+  const severityWeight: Record<AnalysisImprovementItem['severity'], number> = {
+    risk: 0,
+    watch: 1,
+    info: 2
+  };
+
+  return [...fromSections, ...fromSafety, ...fromOptimization]
+    .sort((left, right) => {
+      if (severityWeight[left.severity] !== severityWeight[right.severity]) {
+        return severityWeight[left.severity] - severityWeight[right.severity];
+      }
+
+      if (left.location && !right.location) return -1;
+      if (!left.location && right.location) return 1;
+      return left.title.localeCompare(right.title);
+    })
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
+    .slice(0, 4);
+}
+
+function buildPracticeSummary(mentor: MentorViewModel): AnalysisPracticeSummaryViewModel {
+  const recommendation = mentor.selectedMentorProblem;
+  const alternateRecommendations = mentor.personalizedMentorQueue
+    .map((entry) => entry.recommendation)
+    .filter((candidate) => candidate.id !== recommendation?.id)
+    .slice(0, 2);
+
+  return {
+    recommendation,
+    selectionSummary: mentor.mentorSelectionSummary,
+    completionPercent: mentor.mentorCompletionPercent,
+    currentMilestone: mentor.mentorCurrentMilestone,
+    hint: mentor.mentorHintCards[0]?.body ?? null,
+    queueCount: mentor.recommendedProblemsCount,
+    alternateRecommendations
+  };
+}
+
 export function buildConsoleViewModel({
   output,
   pendingRunInputEcho,
@@ -256,7 +395,9 @@ export function buildVisualizerViewModel({
   currentTraceStepData,
   isTracing,
   traceErr,
-  traceNotice
+  traceNotice,
+  traceReadiness,
+  showTraceReadinessPrompt
 }: {
   editorCode: string;
   runConsoleTranscript: string;
@@ -270,6 +411,8 @@ export function buildVisualizerViewModel({
   isTracing: boolean;
   traceErr: string | null;
   traceNotice: string | null;
+  traceReadiness: TraceReadinessResult | null;
+  showTraceReadinessPrompt: boolean;
 }): VisualizerViewModel {
   const intentPrediction = predictProgramIntent(editorCode);
   const output = runConsoleTranscript
@@ -329,6 +472,8 @@ export function buildVisualizerViewModel({
           : 'optional',
     isTracing,
     traceErr,
+    traceReadiness,
+    showTraceReadinessPrompt,
     traceSteps,
     currentTraceStepData,
     loadingSteps: getLoadingSteps(intentPrediction.primaryLabel),
@@ -339,11 +484,13 @@ export function buildVisualizerViewModel({
 export function buildAnalysisViewModel({
   editorCode,
   analysis,
-  intentExplainer
+  intentExplainer,
+  mentor
 }: {
   editorCode: string;
   analysis: UnifiedAnalysisResult;
   intentExplainer: IntentExplainerViewModel;
+  mentor: MentorViewModel;
 }): AnalysisViewModel {
   const structureIntents = new Set(['linked-list', 'stack', 'queue', 'tree', 'graph']);
   const algorithmIntents = new Set([
@@ -382,18 +529,29 @@ export function buildAnalysisViewModel({
     algorithmTechniques,
     Math.max(editorCode.split('\n').length, 1)
   );
+  const dominantAnalysisSection = pickDominantSection(analysis.staticReport.sections);
+  const mainAnalysisSection =
+    analysis.staticReport.sections.find((section) => {
+      const title = section.title.trim().toLowerCase();
+      return title === 'main' || title === 'main()';
+    }) ?? null;
 
   return {
     status: editorCode.trim().length > 0 ? 'ready' : 'empty',
     report: analysis,
+    primaryTypeLabel: analysis.primaryType,
+    identityExplanation: buildIdentityExplanation(analysis, dominantAnalysisSection),
+    identityEvidence: analysis.evidence.slice(0, 4),
+    focusSectionLabel: dominantAnalysisSection ? formatSectionTitle(dominantAnalysisSection.title) : null,
+    implementationStyle: analysis.implementationStyle,
+    accessPattern: analysis.accessPattern,
+    confidencePercent: Math.round(analysis.confidence * 100),
+    improvementItems: buildImprovementItems(analysis),
+    practiceSummary: buildPracticeSummary(mentor),
     hasDetectedDsa: detectedDsaCards.length > 0,
     hasDetectedAlgorithms: detectedAlgorithmCards.length > 0,
-    dominantAnalysisSection: pickDominantSection(analysis.staticReport.sections),
-    mainAnalysisSection:
-      analysis.staticReport.sections.find((section) => {
-        const title = section.title.trim().toLowerCase();
-        return title === 'main' || title === 'main()';
-      }) ?? null,
+    dominantAnalysisSection,
+    mainAnalysisSection,
     detectedDsaCards,
     detectedAlgorithmCards,
     reverseRiskCount: analysis.reverseReport.safetyFindings.filter((finding) => finding.severity === 'risk').length,
