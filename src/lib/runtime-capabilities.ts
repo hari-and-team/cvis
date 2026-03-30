@@ -13,11 +13,6 @@ function getConfiguredApiBase(): string {
 
 function getConfiguredExecutionMode(): ExecutionMode {
   const configuredApiBase = getConfiguredApiBase();
-
-  if (import.meta.env.PROD && configuredApiBase) {
-    return 'trace-only';
-  }
-
   return resolveExecutionMode({
     explicitMode: env.PUBLIC_EXECUTION_MODE,
     apiBase: configuredApiBase,
