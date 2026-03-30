@@ -1,4 +1,5 @@
-export const MAX_TRACE_ARRAY_LENGTH = 10_000;
+export const MAX_TRACE_ARRAY_ALLOCATION_LENGTH = 50_000;
+export const MAX_TRACE_ARRAY_SNAPSHOT_LENGTH = 32;
 const TRACE_SNAPSHOT_DEPTH = 4;
 
 export function snapshotValue(value, seen = new WeakSet(), depth = 0) {
@@ -26,7 +27,7 @@ export function snapshotValue(value, seen = new WeakSet(), depth = 0) {
 
   if (Array.isArray(value)) {
     return value
-      .slice(0, MAX_TRACE_ARRAY_LENGTH)
+      .slice(0, MAX_TRACE_ARRAY_SNAPSHOT_LENGTH)
       .map((entry) => snapshotValue(entry, seen, depth + 1));
   }
 

@@ -145,10 +145,10 @@ else
 fi
 echo ""
 
-echo "Test 8: Trace rejects unsupported syntax cleanly"
+echo "Test 8: Trace supports switch/case control flow"
 cat > "$TEMP_DIR/trace-unsupported.json" << 'EOF'
 {
-  "code": "#include <stdio.h>\nint main() {\n  int x = 2;\n  switch (x) {\n    case 2: return 0;\n    default: return 1;\n  }\n}\n"
+  "code": "#include <stdio.h>\nint main() {\n  int x = 2;\n  int y = 0;\n  switch (x) {\n    case 1:\n      y = 11;\n      break;\n    case 2:\n      y = 22;\n      break;\n    default:\n      y = 33;\n  }\n  return y;\n}\n"
 }
 EOF
 TRACE_UNSUPPORTED_RESULT=$(curl -s -X POST "$API_BASE/api/trace" \
@@ -156,11 +156,11 @@ TRACE_UNSUPPORTED_RESULT=$(curl -s -X POST "$API_BASE/api/trace" \
   -d @"$TEMP_DIR/trace-unsupported.json")
 echo "$TRACE_UNSUPPORTED_RESULT" | python3 -m json.tool
 TRACE_UNSUPPORTED_SUCCESS=$(echo "$TRACE_UNSUPPORTED_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(body.get('success', True))")
-TRACE_UNSUPPORTED_CLEAR=$(echo "$TRACE_UNSUPPORTED_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); errs=body.get('errors') or []; print(bool(errs) and 'does not support switch/case' in errs[0])")
-if [ "$TRACE_UNSUPPORTED_SUCCESS" = "False" ] && [ "$TRACE_UNSUPPORTED_CLEAR" = "True" ]; then
-  echo "✓ Unsupported trace syntax returns a controlled error"
+TRACE_UNSUPPORTED_Y=$(echo "$TRACE_UNSUPPORTED_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); steps=body.get('steps') or []; runtime=(steps[-1].get('runtime') if steps else {}) or {}; frames=runtime.get('frames') or []; locals=(frames[0].get('locals') if frames else {}) or {}; print(locals.get('y'))")
+if [ "$TRACE_UNSUPPORTED_SUCCESS" = "True" ] && [ "$TRACE_UNSUPPORTED_Y" = "22" ]; then
+  echo "✓ Switch/case trace now succeeds"
 else
-  echo "✗ Unsupported trace syntax was not handled cleanly"
+  echo "✗ Switch/case trace did not execute as expected"
   exit 1
 fi
 echo ""

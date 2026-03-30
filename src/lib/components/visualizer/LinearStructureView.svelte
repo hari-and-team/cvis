@@ -4,9 +4,12 @@
 
   export let label = 'Structure';
   export let values: string[] = [];
+  export let recentlyRemoved: string[] = [];
+  export let removedLabel: string | null = null;
 
   $: normalizedLabel = label.trim().toLowerCase();
   $: isStack = normalizedLabel === 'stack';
+  $: resolvedRemovedLabel = removedLabel ?? (isStack ? 'Popped values' : 'Removed values');
 </script>
 
 <section class="viz-section">
@@ -16,33 +19,47 @@
   </div>
 
   {#if isStack}
-    <div class="stack-visualizer">
-      <div class="stack-top-rail">
-        <span class="stack-top-pill">Top</span>
+    <div class="stack-layout">
+      <div class="stack-visualizer">
+        <div class="stack-top-rail">
+          <span class="stack-top-pill">Top</span>
+        </div>
+
+        <div class="stack-chamber">
+          {#if values.length === 0}
+            <div class="stack-empty-state">Empty stack</div>
+          {:else}
+            <div class="stack-column">
+              {#each values as item, index (`${index}:${item}`)}
+                <div
+                  class:stack-block-top={index === values.length - 1}
+                  class="stack-block"
+                  in:fly={{ y: -28, duration: 220, opacity: 0.18 }}
+                  out:fly={{ y: -28, duration: 180, opacity: 0 }}
+                  animate:flip={{ duration: 220 }}
+                >
+                  <span class="stack-block-value">{item}</span>
+                  {#if index === values.length - 1}
+                    <span class="stack-top-tag">Top</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
 
-      <div class="stack-chamber">
-        {#if values.length === 0}
-          <div class="stack-empty-state">Empty stack</div>
-        {:else}
-          <div class="stack-column">
-            {#each values as item, index (`${index}:${item}`)}
-              <div
-                class:stack-block-top={index === values.length - 1}
-                class="stack-block"
-                in:fly={{ y: -28, duration: 220, opacity: 0.18 }}
-                out:fly={{ y: -28, duration: 180, opacity: 0 }}
-                animate:flip={{ duration: 220 }}
-              >
-                <span class="stack-block-value">{item}</span>
-                {#if index === values.length - 1}
-                  <span class="stack-top-tag">Top</span>
-                {/if}
-              </div>
+      {#if recentlyRemoved.length > 0}
+        <aside class="removed-panel">
+          <span class="removed-panel-label">{resolvedRemovedLabel}</span>
+          <div class="removed-panel-arrow" aria-hidden="true">→</div>
+          <div class="removed-panel-list">
+            {#each recentlyRemoved as item, index (`${index}:${item}`)}
+              <div class="removed-panel-chip">{item}</div>
             {/each}
           </div>
-        {/if}
-      </div>
+        </aside>
+      {/if}
     </div>
   {:else}
     <div class="linear-structure">
@@ -54,6 +71,13 @@
 </section>
 
 <style>
+  .stack-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 240px) minmax(120px, 180px);
+    gap: 14px;
+    align-items: start;
+  }
+
   .stack-visualizer {
     display: flex;
     flex-direction: column;
@@ -155,5 +179,57 @@
     color: color-mix(in srgb, var(--text-mid) 80%, var(--text-dim));
     font-size: 11px;
     font-style: italic;
+  }
+
+  .removed-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--red) 42%, transparent);
+    background:
+      radial-gradient(circle at top center, color-mix(in srgb, var(--red) 16%, transparent), transparent 60%),
+      color-mix(in srgb, var(--bg-deep) 92%, transparent);
+    box-shadow: 0 12px 24px color-mix(in srgb, var(--red) 14%, transparent);
+  }
+
+  .removed-panel-label {
+    color: color-mix(in srgb, var(--red) 82%, white 18%);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .removed-panel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .removed-panel-arrow {
+    color: color-mix(in srgb, var(--red) 70%, white 10%);
+    font-size: 18px;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .removed-panel-chip {
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--red) 48%, transparent);
+    background: color-mix(in srgb, var(--red) 12%, var(--bg-card));
+    color: color-mix(in srgb, var(--red) 86%, white 14%);
+    font-size: 14px;
+    font-weight: 800;
+    text-align: center;
+    box-shadow: 0 10px 22px color-mix(in srgb, var(--red) 14%, transparent);
+  }
+
+  @media (max-width: 720px) {
+    .stack-layout {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
