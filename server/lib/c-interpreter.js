@@ -14,7 +14,7 @@
  * - Simplified type system
  */
 
-import { snapshotValue, MAX_TRACE_ARRAY_LENGTH } from './trace/runtime-snapshot.js';
+import { snapshotValue, MAX_TRACE_ARRAY_ALLOCATION_LENGTH } from './trace/runtime-snapshot.js';
 import { normalizeTraceError } from './trace/trace-errors.js';
 import { detectUnsupportedTraceFeature } from './trace/unsupported-syntax.js';
 
@@ -25,7 +25,8 @@ import { detectUnsupportedTraceFeature } from './trace/unsupported-syntax.js';
 const KEYWORDS = new Set([
   'int', 'float', 'double', 'char', 'void', 'return',
   'if', 'else', 'while', 'for', 'do', 'break', 'continue',
-  'struct', 'sizeof', 'NULL', 'true', 'false'
+  'switch', 'case', 'default',
+  'struct', 'sizeof', 'typedef', 'NULL', 'true', 'false'
 ]);
 
 const TYPES = new Set(['int', 'float', 'double', 'char', 'void', 'long', 'short', 'unsigned']);
@@ -211,6 +212,7 @@ class Parser {
   constructor(tokens) {
     this.tokens = tokens;
     this.pos = 0;
+    this.typedefNames = new Set();
   }
 
   peek(n = 0) { return this.tokens[this.pos + n] || { type: 'EOF', value: '' }; }
@@ -235,6 +237,8 @@ class Parser {
     while (this.peek().type !== 'EOF') {
       if (this.peek().type === 'PREP') {
         program.body.push({ type: 'Preprocessor', value: this.advance().value });
+      } else if (this.peek().type === 'KW' && this.peek().value === 'typedef') {
+        program.body.push(this.parseTypedef());
       } else if (
         this.peek().type === 'KW' &&
         this.peek().value === 'struct' &&
@@ -258,12 +262,44 @@ class Parser {
 
   isTypeKeyword() {
     const t = this.peek();
-    return TYPES.has(t.value) || t.value === 'void' || t.value === 'struct';
+    return (
+      (t.type === 'KW' && (TYPES.has(t.value) || t.value === 'void' || t.value === 'struct')) ||
+      (t.type === 'ID' && this.typedefNames.has(t.value))
+    );
+  }
+
+  parseTypedef() {
+    const line = this.peek().line;
+    this.expect('KW', 'typedef');
+
+    let alias = '';
+    let depth = 0;
+    while (this.peek().type !== 'EOF') {
+      const token = this.advance();
+      if (token.value === '{') {
+        depth += 1;
+      } else if (token.value === '}') {
+        depth = Math.max(0, depth - 1);
+      } else if (depth === 0 && token.type === 'ID') {
+        alias = token.value;
+      }
+
+      if (depth === 0 && token.value === ';') {
+        break;
+      }
+    }
+
+    if (alias) {
+      this.typedefNames.add(alias);
+    }
+
+    return { type: 'Typedef', name: alias, line };
   }
 
   parseDeclaration() {
     const line = this.peek().line;
-    let typeName = this.parseType();
+    const baseType = this.parseType();
+    let typeName = baseType;
     
     // Check for pointer
     while (this.match('OP', '*')) {
@@ -285,37 +321,57 @@ class Parser {
       }
     }
 
-    // Array declaration
-    if (this.match('OP', '[')) {
+    const declarations = [this.parseDeclaredBinding(typeName, name, line)];
+    while (this.match('OP', ',')) {
+      let declaratorType = baseType;
+      while (this.match('OP', '*')) declaratorType += '*';
+      const vname = this.expect('ID').value;
+      declarations.push(this.parseDeclaredBinding(declaratorType, vname, line));
+    }
+    this.expect('OP', ';');
+
+    if (declarations.length === 1) {
+      return declarations[0];
+    }
+
+    return { type: 'DeclList', declarations, line };
+  }
+
+  parseDeclaredBinding(typeName, name, line) {
+    const dimensions = [];
+    while (this.match('OP', '[')) {
       const sizeExpr = this.peek().value !== ']' ? this.parseExpression() : null;
       this.expect('OP', ']');
+      dimensions.push(sizeExpr);
+    }
+
+    if (dimensions.length > 0) {
       let init = null;
       if (this.match('OP', '=')) {
         init = this.parseInitializer();
       }
-      this.expect('OP', ';');
-      return { type: 'ArrayDecl', varType: typeName, name, sizeExpr, init, line };
+      return {
+        type: 'ArrayDecl',
+        varType: typeName,
+        name,
+        dimensions,
+        sizeExpr: dimensions[0] ?? null,
+        init,
+        line
+      };
     }
 
-    // Variable declaration
     let init = null;
     if (this.match('OP', '=')) {
       init = this.parseExpression();
     }
 
-    // Multiple declarations
-    const vars = [{ name, init }];
-    while (this.match('OP', ',')) {
-      while (this.match('OP', '*')) typeName += '*';
-      const vname = this.expect('ID').value;
-      let vinit = null;
-      if (this.match('OP', '=')) {
-        vinit = this.parseExpression();
-      }
-      vars.push({ name: vname, init: vinit });
-    }
-    this.expect('OP', ';');
-    return { type: 'VarDecl', varType: typeName, vars, line };
+    return {
+      type: 'VarDecl',
+      varType: typeName,
+      vars: [{ name, init }],
+      line
+    };
   }
 
   parseType() {
@@ -326,6 +382,10 @@ class Parser {
         type += ` ${this.advance().value}`;
       }
       return type;
+    }
+
+    if (this.peek().type === 'ID' && this.typedefNames.has(this.peek().value)) {
+      return this.advance().value;
     }
 
     while (this.peek().type === 'KW' && TYPES.has(this.peek().value)) {
@@ -362,9 +422,12 @@ class Parser {
         let ptype = this.parseType();
         while (this.match('OP', '*')) ptype += '*';
         const pname = this.match('ID')?.value || '';
-        // Array param
-        if (this.match('OP', '[')) {
-          this.match('OP', ']');
+
+        while (this.match('OP', '[')) {
+          if (this.peek().value !== ']') {
+            this.parseExpression();
+          }
+          this.expect('OP', ']');
           ptype += '[]';
         }
         params.push({ type: ptype, name: pname });
@@ -392,6 +455,7 @@ class Parser {
     if (t.value === 'if') return this.parseIf();
     if (t.value === 'while') return this.parseWhile();
     if (t.value === 'for') return this.parseFor();
+    if (t.value === 'switch') return this.parseSwitch();
     if (t.value === 'return') return this.parseReturn();
     if (t.value === 'break') { this.advance(); this.match('OP', ';'); return { type: 'Break', line }; }
     if (t.value === 'continue') { this.advance(); this.match('OP', ';'); return { type: 'Continue', line }; }
@@ -463,6 +527,60 @@ class Parser {
     return { type: 'For', init, condition, update, body, line };
   }
 
+  parseSwitch() {
+    const line = this.peek().line;
+    this.expect('KW', 'switch');
+    this.expect('OP', '(');
+    const discriminant = this.parseExpression();
+    this.expect('OP', ')');
+    this.expect('OP', '{');
+
+    const clauses = [];
+
+    while (this.peek().value !== '}' && this.peek().type !== 'EOF') {
+      if (this.match('KW', 'case')) {
+        const caseLine = this.tokens[this.pos - 1].line;
+        const test = this.parseExpression();
+        this.expect('OP', ':');
+
+        const consequent = [];
+        while (
+          this.peek().type !== 'EOF' &&
+          this.peek().value !== '}' &&
+          !(this.peek().type === 'KW' && (this.peek().value === 'case' || this.peek().value === 'default'))
+        ) {
+          consequent.push(this.parseStatement());
+        }
+
+        clauses.push({ type: 'SwitchCase', test, consequent, line: caseLine });
+        continue;
+      }
+
+      if (this.match('KW', 'default')) {
+        const defaultLine = this.tokens[this.pos - 1].line;
+        this.expect('OP', ':');
+
+        const consequent = [];
+        while (
+          this.peek().type !== 'EOF' &&
+          this.peek().value !== '}' &&
+          !(this.peek().type === 'KW' && (this.peek().value === 'case' || this.peek().value === 'default'))
+        ) {
+          consequent.push(this.parseStatement());
+        }
+
+        clauses.push({ type: 'SwitchCase', test: null, consequent, line: defaultLine });
+        continue;
+      }
+
+      // Recover from malformed switch bodies by consuming the unexpected token.
+      this.advance();
+    }
+
+    this.expect('OP', '}');
+    return { type: 'Switch', discriminant, clauses, line };
+  }
+
   parseReturn() {
     const line = this.peek().line;
     this.expect('KW', 'return');
@@ -479,7 +597,7 @@ class Parser {
       const elements = [];
       if (this.peek().value !== '}') {
         do {
-          elements.push(this.parseExpression());
+          elements.push(this.parseInitializer());
         } while (this.match('OP', ','));
       }
       this.expect('OP', '}');
@@ -687,7 +805,12 @@ class Parser {
       return false;
     }
 
-    if (!(token.type === 'KW' && (TYPES.has(token.value) || token.value === 'void' || token.value === 'struct'))) {
+    if (
+      !(
+        (token.type === 'KW' && (TYPES.has(token.value) || token.value === 'void' || token.value === 'struct')) ||
+        (token.type === 'ID' && this.typedefNames.has(token.value))
+      )
+    ) {
       return false;
     }
 
@@ -828,18 +951,10 @@ class Interpreter {
       return false;
     }
 
-    if (normalizedTarget.type === 'Identifier') {
-      this.setVar(normalizedTarget.name, value);
+    const reference = this.resolveLValue(normalizedTarget);
+    if (reference) {
+      reference.write(value);
       return true;
-    }
-
-    if (normalizedTarget.type === 'Index' && normalizedTarget.object?.type === 'Identifier') {
-      const arr = this.getVar(normalizedTarget.object.name);
-      const idx = this.evaluate(normalizedTarget.index);
-      if (Array.isArray(arr) && Number.isInteger(idx) && idx >= 0 && idx < arr.length) {
-        arr[idx] = value;
-        return true;
-      }
     }
 
     return false;
@@ -849,7 +964,7 @@ class Interpreter {
     try {
       // Execute global declarations first
       for (const node of this.ast.body) {
-        if (node.type === 'VarDecl' || node.type === 'ArrayDecl') {
+        if (node.type === 'VarDecl' || node.type === 'ArrayDecl' || node.type === 'DeclList') {
           this.execute(node);
         }
       }
@@ -987,23 +1102,129 @@ class Interpreter {
     return created;
   }
 
+  isTraceReference(value) {
+    return Boolean(value) && typeof value === 'object' && value.__traceRef === true;
+  }
+
+  resolveVariableOwner(name) {
+    for (let i = this.callStack.length - 1; i >= 0; i -= 1) {
+      if (name in this.callStack[i].locals) {
+        return this.callStack[i].locals;
+      }
+    }
+
+    if (name in this.globalVars) {
+      return this.globalVars;
+    }
+
+    return this.getCurrentLocals();
+  }
+
+  resolveLValue(node) {
+    if (!node) return null;
+
+    if (node.type === 'Identifier') {
+      const owner = this.resolveVariableOwner(node.name);
+      return {
+        read: () => owner[node.name] ?? 0,
+        write: (value) => {
+          owner[node.name] = value;
+        }
+      };
+    }
+
+    if (node.type === 'Index') {
+      let container = this.evaluate(node.object);
+      const idx = this.evaluate(node.index);
+      if (!Number.isInteger(idx) || idx < 0) {
+        return null;
+      }
+
+      if (!(Array.isArray(container) || (container && typeof container === 'object'))) {
+        const ownerReference = this.resolveLValue(node.object);
+        if (ownerReference) {
+          const created = [];
+          ownerReference.write(created);
+          container = created;
+        }
+      }
+
+      if (Array.isArray(container)) {
+        return {
+          read: () => container[idx] ?? 0,
+          write: (value) => {
+            container[idx] = value;
+          }
+        };
+      }
+
+      if (container && typeof container === 'object') {
+        return {
+          read: () => container[idx] ?? 0,
+          write: (value) => {
+            container[idx] = value;
+          }
+        };
+      }
+
+      return null;
+    }
+
+    if (node.type === 'Member' || node.type === 'PtrMember') {
+      const container = this.resolveMemberContainer(node);
+      if (!container) {
+        return null;
+      }
+
+      return {
+        read: () => container[node.member] ?? 0,
+        write: (value) => {
+          container[node.member] = value;
+        }
+      };
+    }
+
+    return null;
+  }
+
   resolveMemberContainer(target) {
     if (!target) return null;
 
     if (target.type === 'PtrMember') {
-      const address = this.evaluate(target.object);
-      return this.ensureHeapObject(address);
-    }
+      const pointer = this.evaluate(target.object);
+      if (this.isTraceReference(pointer)) {
+        const reference = pointer.reference;
+        if (!reference) {
+          return null;
+        }
 
-    if (target.type === 'Member') {
-      if (target.object?.type === 'Identifier') {
-        const current = this.getVar(target.object.name);
+        const current = reference.read();
         if (current && typeof current === 'object' && !Array.isArray(current)) {
           return current;
         }
 
         const created = {};
-        this.setVar(target.object.name, created);
+        reference.write(created);
+        return created;
+      }
+
+      if (pointer && typeof pointer === 'object' && !Array.isArray(pointer)) {
+        return pointer;
+      }
+
+      return this.ensureHeapObject(pointer);
+    }
+
+    if (target.type === 'Member') {
+      const reference = this.resolveLValue(target.object);
+      if (reference) {
+        const current = reference.read();
+        if (current && typeof current === 'object' && !Array.isArray(current)) {
+          return current;
+        }
+
+        const created = {};
+        reference.write(created);
         return created;
       }
 
@@ -1021,34 +1242,24 @@ class Interpreter {
 
     switch (node.type) {
       case 'VarDecl': {
-        this.recordStep(node.line, `Variable declaration`);
-        for (const v of node.vars) {
-          const val = v.init ? this.evaluate(v.init) : 0;
-          this.setVar(v.name, val);
-        }
+        this.executeVarDecl(node);
         return;
       }
 
       case 'ArrayDecl': {
-        this.recordStep(node.line, `Array declaration: ${node.name}`);
-        const declaredSize = node.sizeExpr
-          ? Math.max(0, Math.trunc(this.evaluate(node.sizeExpr)))
-          : Number.isFinite(node.size)
-            ? Math.max(0, Math.trunc(node.size))
-            : 0;
-        const size = declaredSize || (node.init?.elements?.length || 0);
-        if (size > MAX_TRACE_ARRAY_LENGTH) {
-          throw new Error(
-            `Trace array limit exceeded (${size}). The trace engine supports arrays up to ${MAX_TRACE_ARRAY_LENGTH} elements. Use compile/run for larger inputs.`
-          );
-        }
-        const arr = new Array(size).fill(0);
-        if (node.init?.elements) {
-          for (let i = 0; i < node.init.elements.length && i < size; i++) {
-            arr[i] = this.evaluate(node.init.elements[i]);
+        this.executeArrayDecl(node);
+        return;
+      }
+
+      case 'DeclList': {
+        this.recordStep(node.line, `Variable declaration`);
+        for (const declaration of node.declarations) {
+          if (declaration.type === 'VarDecl') {
+            this.executeVarDecl(declaration, false);
+          } else if (declaration.type === 'ArrayDecl') {
+            this.executeArrayDecl(declaration, false);
           }
         }
-        this.setVar(node.name, arr);
         return;
       }
 
@@ -1082,7 +1293,7 @@ class Interpreter {
 
       case 'For': {
         if (node.init) {
-          if (node.init.type === 'VarDecl' || node.init.type === 'ExprStmt') {
+          if (node.init.type === 'VarDecl' || node.init.type === 'ArrayDecl' || node.init.type === 'DeclList' || node.init.type === 'ExprStmt') {
             this.execute(node.init);
           } else {
             this.evaluate(node.init);
@@ -1099,6 +1310,53 @@ class Interpreter {
           if (this.returnValue !== null) break;
           if (node.update) {
             this.evaluate(node.update);
+          }
+        }
+        return;
+      }
+
+      case 'Switch': {
+        this.recordStep(node.line, `switch condition`);
+        const discriminant = this.evaluate(node.discriminant);
+
+        let startIndex = -1;
+        for (let i = 0; i < node.clauses.length; i += 1) {
+          const switchCase = node.clauses[i];
+          if (switchCase.test === null) {
+            if (startIndex === -1) {
+              startIndex = i;
+            }
+            continue;
+          }
+
+          if (this.evaluate(switchCase.test) === discriminant) {
+            startIndex = i;
+            break;
+          }
+        }
+
+        if (startIndex === -1) {
+          return;
+        }
+
+        for (let i = startIndex; i < node.clauses.length; i += 1) {
+          const switchCase = node.clauses[i];
+          this.recordStep(switchCase.line, switchCase.test === null ? 'default case' : 'case match');
+
+          for (const stmt of switchCase.consequent) {
+            this.execute(stmt);
+            if (this.breakFlag || this.continueFlag || this.returnValue !== null) {
+              break;
+            }
+          }
+
+          if (this.breakFlag) {
+            this.breakFlag = false;
+            break;
+          }
+
+          if (this.continueFlag || this.returnValue !== null) {
+            break;
           }
         }
         return;
@@ -1138,6 +1396,102 @@ class Interpreter {
         break;
       }
     }
+  }
+
+  executeVarDecl(node, shouldRecord = true) {
+    if (shouldRecord) {
+      this.recordStep(node.line, `Variable declaration`);
+    }
+
+    for (const v of node.vars) {
+      const val = v.init ? this.evaluate(v.init) : 0;
+      this.setVar(v.name, val);
+    }
+  }
+
+  resolveArrayDimensions(node) {
+    const rawDimensions =
+      Array.isArray(node.dimensions) && node.dimensions.length > 0
+        ? node.dimensions
+        : [node.sizeExpr ?? null];
+
+    return rawDimensions.map((expr, index) => {
+      if (expr) {
+        return Math.max(0, Math.trunc(this.evaluate(expr)));
+      }
+
+      if (index === 0 && node.init?.elements) {
+        return node.init.elements.length;
+      }
+
+      return 0;
+    });
+  }
+
+  countArraySlots(dimensions) {
+    if (!Array.isArray(dimensions) || dimensions.length === 0) {
+      return 0;
+    }
+
+    return dimensions.reduce((total, size) => total * Math.max(0, size), 1);
+  }
+
+  createNestedArray(dimensions, depth = 0) {
+    const size = dimensions[depth] ?? 0;
+    const arr = new Array(size).fill(0);
+
+    if (depth < dimensions.length - 1) {
+      for (let i = 0; i < size; i += 1) {
+        arr[i] = this.createNestedArray(dimensions, depth + 1);
+      }
+    }
+
+    return arr;
+  }
+
+  applyArrayInitializer(target, initNode) {
+    if (!Array.isArray(target) || !initNode?.elements) {
+      return;
+    }
+
+    for (let i = 0; i < initNode.elements.length && i < target.length; i += 1) {
+      const element = initNode.elements[i];
+      if (element?.type === 'ArrayInit' && Array.isArray(target[i])) {
+        this.applyArrayInitializer(target[i], element);
+        continue;
+      }
+
+      if (Array.isArray(target[i])) {
+        continue;
+      }
+
+      target[i] = this.evaluate(element);
+    }
+  }
+
+  executeArrayDecl(node, shouldRecord = true) {
+    if (shouldRecord) {
+      this.recordStep(node.line, `Array declaration: ${node.name}`);
+    }
+
+    const dimensions = this.resolveArrayDimensions(node);
+    const totalSize = this.countArraySlots(dimensions);
+    if (totalSize > MAX_TRACE_ARRAY_ALLOCATION_LENGTH) {
+      throw new Error(
+        `Trace array limit exceeded (${totalSize}). The trace engine supports arrays up to ${MAX_TRACE_ARRAY_ALLOCATION_LENGTH} elements. Use compile/run for larger inputs.`
+      );
+    }
+
+    const arr =
+      dimensions.length > 1
+        ? this.createNestedArray(dimensions)
+        : new Array(dimensions[0] || 0).fill(0);
+
+    if (node.init?.elements) {
+      this.applyArrayInitializer(arr, node.init);
+    }
+
+    this.setVar(node.name, arr);
   }
 
   evaluate(node) {
@@ -1182,23 +1536,42 @@ class Interpreter {
 
       case 'Unary': {
         if (node.op === '++pre' || node.op === '--pre') {
-          const name = node.operand.name;
-          const val = this.getVar(name) + (node.op === '++pre' ? 1 : -1);
-          this.setVar(name, val);
+          const reference = this.resolveLValue(node.operand);
+          if (!reference) return 0;
+          const current = reference.read();
+          const val = current + (node.op === '++pre' ? 1 : -1);
+          reference.write(val);
           return val;
         }
         if (node.op === '++post' || node.op === '--post') {
-          const name = node.operand.name;
-          const val = this.getVar(name);
-          this.setVar(name, val + (node.op === '++post' ? 1 : -1));
+          const reference = this.resolveLValue(node.operand);
+          if (!reference) return 0;
+          const val = reference.read();
+          reference.write(val + (node.op === '++post' ? 1 : -1));
           return val;
         }
         const operand = this.evaluate(node.operand);
         switch (node.op) {
           case '-': return -operand;
           case '!': return operand ? 0 : 1;
-          case '&': return this.nextHeapAddr++; // Simplified address-of
-          case '*': return this.heap.get(operand) || 0; // Simplified dereference
+          case '&':
+            if (
+              node.operand?.type === 'Identifier' ||
+              node.operand?.type === 'Index' ||
+              node.operand?.type === 'Member' ||
+              node.operand?.type === 'PtrMember'
+            ) {
+              const reference = this.resolveLValue(node.operand);
+              if (reference) {
+                return { __traceRef: true, reference };
+              }
+            }
+            return this.nextHeapAddr++;
+          case '*':
+            if (this.isTraceReference(operand)) {
+              return operand.reference?.read() ?? 0;
+            }
+            return this.heap.get(operand) || 0; // Simplified dereference
           default: return operand;
         }
       }
@@ -1208,11 +1581,11 @@ class Interpreter {
 
       case 'Assignment': {
         const right = this.evaluate(node.right);
-        if (node.left.type === 'Identifier') {
-          const name = node.left.name;
+        const reference = this.resolveLValue(node.left);
+        if (reference) {
           let val = right;
           if (node.op !== '=') {
-            const left = this.getVar(name);
+            const left = reference.read();
             switch (node.op) {
               case '+=': val = left + right; break;
               case '-=': val = left - right; break;
@@ -1221,31 +1594,19 @@ class Interpreter {
               case '%=': val = right === 0 ? left : left % right; break;
             }
           }
-          this.setVar(name, val);
+          reference.write(val);
           return val;
-        }
-        if (node.left.type === 'Index') {
-          const arr = this.getVar(node.left.object.name);
-          const idx = this.evaluate(node.left.index);
-          if (Array.isArray(arr)) {
-            arr[idx] = right;
-          }
-          return right;
-        }
-        if (node.left.type === 'Member' || node.left.type === 'PtrMember') {
-          const container = this.resolveMemberContainer(node.left);
-          if (container) {
-            container[node.left.member] = right;
-          }
-          return right;
         }
         return right;
       }
 
       case 'Index': {
-        const arr = this.getVar(node.object.name);
+        const arr = this.evaluate(node.object);
         const idx = this.evaluate(node.index);
         if (Array.isArray(arr)) {
+          return arr[idx] ?? 0;
+        }
+        if (arr && typeof arr === 'object') {
           return arr[idx] ?? 0;
         }
         return 0;

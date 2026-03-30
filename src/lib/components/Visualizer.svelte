@@ -193,16 +193,21 @@
         <PointerMapView pointerRefs={renderModel.pointerRefs} />
       {/if}
 
-      {#if renderModel.stackItems.length > 0}
-        <LinearStructureView label="Stack" values={renderModel.stackItems} />
+      {#if renderModel.stackItems.length > 0 || renderModel.recentlyPoppedStackValues.length > 0}
+        <LinearStructureView
+          label="Stack"
+          values={renderModel.stackItems}
+          removedLabel={renderModel.stackSideLabel}
+          recentlyRemoved={renderModel.recentlyPoppedStackValues}
+        />
       {/if}
 
       {#if renderModel.queueItems.length > 0}
         <LinearStructureView label="Queue" values={renderModel.queueItems} />
       {/if}
 
-      {#if renderModel.trees.length > 0}
-        <TreeView trees={renderModel.trees} />
+      {#if renderModel.trees.length > 0 || renderModel.recentlyDeletedTreeValues.length > 0}
+        <TreeView trees={renderModel.trees} recentlyDeleted={renderModel.recentlyDeletedTreeValues} />
       {/if}
 
       {#if renderModel.graphs.length > 0}

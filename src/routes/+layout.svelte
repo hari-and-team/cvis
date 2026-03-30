@@ -350,7 +350,10 @@
     resetTraceUiState();
     rightPaneTab.set('console');
 
-    await runBinaryAction($lastBinaryPath);
+    await runBinaryAction({
+      binaryPath: $lastBinaryPath,
+      code: $editorCode
+    });
   }
 
   async function handleTrace() {

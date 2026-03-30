@@ -749,6 +749,23 @@ function normalizeMemoryEntries(memory: Record<string, unknown>): VisualizerMemo
     .sort((left, right) => left.key.localeCompare(right.key));
 }
 
+function mergeMemoryEntries(
+  primary: VisualizerMemoryEntry[],
+  secondary: VisualizerMemoryEntry[]
+): VisualizerMemoryEntry[] {
+  const merged = new Map<string, VisualizerMemoryEntry>();
+
+  for (const entry of [...primary, ...secondary]) {
+    if (!merged.has(entry.key)) {
+      merged.set(entry.key, entry);
+    }
+  }
+
+  return Array.from(merged.values()).sort((left, right) =>
+    left.key.localeCompare(right.key)
+  );
+}
+
 function toIndexedValues(value: unknown): unknown[] {
   if (Array.isArray(value)) {
     return value;
@@ -1027,8 +1044,9 @@ export function normalizeTraceStep(traceStep: TraceStep | null): NormalizedTrace
   const linkedNodes = parseLinkedNodes(memory);
   const memoryEntries = normalizeMemoryEntries(memory);
   const heapEntries = normalizeMemoryEntries(heap);
+  const structureEntries = mergeMemoryEntries(heapEntries, memoryEntries);
   const linkedLists = buildLinkedLists(linkedNodes);
-  const trees = buildTrees(memoryEntries);
+  const trees = buildTrees(structureEntries);
   const structBlocks = [
     ...buildHeapStructBlocks(heap),
     ...collectInlineStructBlocks(globalFrame, stackFrames, heap)
