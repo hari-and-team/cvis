@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { createEventDispatcher, onDestroy } from 'svelte';
   import type { TraceReadinessResult, TraceStep } from '$lib/types';
   import {
@@ -19,6 +20,7 @@
     userProfile
   } from '$lib/stores';
   import { analyzeUnifiedProgram } from '$lib/analysis/unified-analysis';
+  import type { PracticeRecommendation } from '$lib/analysis/code-type-finder';
   import { createIntentExplainerController } from '$lib/analysis/intent-explainer';
   import {
     buildAnalysisViewModel,
@@ -60,6 +62,9 @@
   }>();
 
   let prevMentorProblemId: string | null = null;
+  let analysisEditorCode = '';
+  let analysisRefreshTimer: number | null = null;
+  let recommendedProblems: PracticeRecommendation[] = [];
   const intentExplainer = createIntentExplainerController();
   let intentExplainerState: IntentExplainerViewModel = {
     result: null,
@@ -75,9 +80,35 @@
   onDestroy(() => {
     unsubscribeIntentExplainer();
     intentExplainer.destroy();
+    if (analysisRefreshTimer !== null) {
+      clearTimeout(analysisRefreshTimer);
+    }
   });
 
-  $: intentExplainer.refresh($editorCode);
+  $: shouldComputeVisualizerViewModel = $rightPaneTab === 'visualizer';
+  $: shouldComputeAnalysisState = $rightPaneTab === 'analysis' || $rightPaneTab === 'mentor';
+  $: if (!shouldComputeAnalysisState) {
+    if (analysisRefreshTimer !== null) {
+      clearTimeout(analysisRefreshTimer);
+      analysisRefreshTimer = null;
+    }
+    analysisEditorCode = $editorCode;
+    intentExplainer.destroy();
+  } else if (!browser || analysisEditorCode === '' || analysisEditorCode === $editorCode) {
+    analysisEditorCode = $editorCode;
+  } else {
+    const nextCode = $editorCode;
+    if (analysisRefreshTimer !== null) {
+      clearTimeout(analysisRefreshTimer);
+    }
+    analysisRefreshTimer = window.setTimeout(() => {
+      analysisEditorCode = nextCode;
+      analysisRefreshTimer = null;
+    }, 180);
+  }
+  $: if ($rightPaneTab === 'analysis') {
+    intentExplainer.refresh(analysisEditorCode);
+  }
   $: canSendToStdin = Boolean($runSessionId);
   $: output = $runConsoleTranscript
     ? $runConsoleTranscript
@@ -89,7 +120,9 @@
   $: clampedTraceStepIndex =
     traceSteps.length === 0 ? 0 : Math.min(Math.max(currentStep, 0), traceSteps.length - 1);
   $: currentTraceStepData = traceSteps[clampedTraceStepIndex] || null;
-  $: unifiedAnalysis = analyzeUnifiedProgram($editorCode, traceSteps);
+  $: unifiedAnalysis = shouldComputeAnalysisState
+    ? analyzeUnifiedProgram(analysisEditorCode, traceSteps)
+    : null;
   $: consoleViewModel = buildConsoleViewModel({
     output,
     pendingRunInputEcho: $pendingRunInputEcho,
@@ -99,40 +132,48 @@
     nativeExecutionEnabled: $nativeExecutionEnabledStore,
     workspaceError: $errorMessage
   });
-  $: visualizerViewModel = buildVisualizerViewModel({
-    editorCode: $editorCode,
-    runConsoleTranscript: $runConsoleTranscript,
-    runSessionId: $runSessionId,
-    lastExecutionResult: $lastExecutionResult,
-    lastCompileResult: $lastCompileResult,
-    lastRunInputTranscript: $lastRunInputTranscript,
-    manualTraceInput: $traceInputDraft,
-    pendingRunInputEcho: $pendingRunInputEcho,
-    traceSteps,
-    currentTraceStepData,
-    isTracing,
-    traceErr,
-    nativeExecutionEnabled: $nativeExecutionEnabledStore,
-    traceNotice,
-    traceReadiness,
-    showTraceReadinessPrompt
-  });
-  $: mentorViewModel = buildMentorPanelViewModel({
-    analysis: unifiedAnalysis,
-    userProfile: $userProfile,
-    mentorSelectionMode: $mentorSelectionMode,
-    selectedPracticeProblemId: $selectedPracticeProblemId,
-    activeMilestoneIndex: $activeMilestoneIndex,
-    milestoneProgress: $milestoneProgress
-  });
-  $: analysisViewModel = buildAnalysisViewModel({
-    editorCode: $editorCode,
-    analysis: unifiedAnalysis,
-    intentExplainer: intentExplainerState,
-    mentor: mentorViewModel
-  });
-  $: recommendedProblems = analysisViewModel.recommendedProblems;
-  $: guidedMentorSelection = mentorViewModel.personalizedMentorQueue[0] ?? null;
+  $: visualizerViewModel = shouldComputeVisualizerViewModel
+    ? buildVisualizerViewModel({
+        editorCode: $editorCode,
+        runConsoleTranscript: $runConsoleTranscript,
+        runSessionId: $runSessionId,
+        lastExecutionResult: $lastExecutionResult,
+        lastCompileResult: $lastCompileResult,
+        lastRunInputTranscript: $lastRunInputTranscript,
+        manualTraceInput: $traceInputDraft,
+        pendingRunInputEcho: $pendingRunInputEcho,
+        traceSteps,
+        currentTraceStepData,
+        isTracing,
+        traceErr,
+        nativeExecutionEnabled: $nativeExecutionEnabledStore,
+        traceNotice,
+        traceReadiness,
+        showTraceReadinessPrompt
+      })
+    : null;
+  $: mentorViewModel =
+    shouldComputeAnalysisState && unifiedAnalysis
+      ? buildMentorPanelViewModel({
+          analysis: unifiedAnalysis,
+          userProfile: $userProfile,
+          mentorSelectionMode: $mentorSelectionMode,
+          selectedPracticeProblemId: $selectedPracticeProblemId,
+          activeMilestoneIndex: $activeMilestoneIndex,
+          milestoneProgress: $milestoneProgress
+        })
+      : null;
+  $: analysisViewModel =
+    $rightPaneTab === 'analysis' && unifiedAnalysis && mentorViewModel
+      ? buildAnalysisViewModel({
+          editorCode: analysisEditorCode,
+          analysis: unifiedAnalysis,
+          intentExplainer: intentExplainerState,
+          mentor: mentorViewModel
+        })
+      : null;
+  $: recommendedProblems = analysisViewModel?.recommendedProblems ?? unifiedAnalysis?.recommendedPractice ?? [];
+  $: guidedMentorSelection = mentorViewModel?.personalizedMentorQueue[0] ?? null;
 
   $: if (recommendedProblems.length === 0 && $selectedPracticeProblemId !== null) {
     selectedPracticeProblemId.set(null);
@@ -149,9 +190,9 @@
     );
   }
 
-  $: if (mentorViewModel.selectedMentorProblem?.id !== prevMentorProblemId) {
-    prevMentorProblemId = mentorViewModel.selectedMentorProblem?.id ?? null;
-    if (mentorViewModel.selectedMentorProblem) {
+  $: if (mentorViewModel?.selectedMentorProblem?.id !== prevMentorProblemId) {
+    prevMentorProblemId = mentorViewModel?.selectedMentorProblem?.id ?? null;
+    if (mentorViewModel?.selectedMentorProblem) {
       activeMilestoneIndex.set(
         getFirstIncompleteMilestoneIndex($milestoneProgress, mentorViewModel.selectedMentorProblem)
       );
@@ -265,32 +306,38 @@
     {/if}
 
     {#if $rightPaneTab === 'visualizer'}
-      <VisualizerPanel
-        viewModel={visualizerViewModel}
-        onTrace={triggerTrace}
-        onRunExact={triggerRunExact}
-        onDismissTraceReadiness={dismissTraceReadiness}
-      />
+      {#if visualizerViewModel}
+        <VisualizerPanel
+          viewModel={visualizerViewModel}
+          onTrace={triggerTrace}
+          onRunExact={triggerRunExact}
+          onDismissTraceReadiness={dismissTraceReadiness}
+        />
+      {/if}
     {/if}
 
     {#if $rightPaneTab === 'analysis'}
-      <AnalysisPanel
-        viewModel={analysisViewModel}
-        onActivateGuidedMentorPlan={activateGuidedMentorPlan}
-        onActivateMentorPlan={activateMentorPlan}
-      />
+      {#if analysisViewModel}
+        <AnalysisPanel
+          viewModel={analysisViewModel}
+          onActivateGuidedMentorPlan={activateGuidedMentorPlan}
+          onActivateMentorPlan={activateMentorPlan}
+        />
+      {/if}
     {/if}
 
     {#if $rightPaneTab === 'mentor'}
-      <MentorPanel
-        viewModel={mentorViewModel}
-        onActivateGuidedMentorPlan={activateGuidedMentorPlan}
-        onActivateManualMentorPlan={activateManualMentorPlan}
-        onFocusMilestone={focusMilestone}
-        onToggleMentorMilestone={toggleMentorMilestone}
-        isMilestoneComplete={isMilestoneComplete}
-        firstIncompleteMilestoneIndex={firstIncompleteMilestoneIndex}
-      />
+      {#if mentorViewModel}
+        <MentorPanel
+          viewModel={mentorViewModel}
+          onActivateGuidedMentorPlan={activateGuidedMentorPlan}
+          onActivateManualMentorPlan={activateManualMentorPlan}
+          onFocusMilestone={focusMilestone}
+          onToggleMentorMilestone={toggleMentorMilestone}
+          isMilestoneComplete={isMilestoneComplete}
+          firstIncompleteMilestoneIndex={firstIncompleteMilestoneIndex}
+        />
+      {/if}
     {/if}
   </div>
 </div>
