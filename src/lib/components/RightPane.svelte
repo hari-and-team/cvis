@@ -37,7 +37,7 @@
     sendRuntimeEof,
     sendRuntimeInputLine
   } from '$lib/runtime/actions';
-  import { nativeExecutionEnabled } from '$lib/runtime-capabilities';
+  import { nativeExecutionEnabledStore } from '$lib/runtime-capabilities';
   import { RIGHT_PANE_TABS } from './right-pane-config';
   import './right-pane/panels.css';
   import ConsolePanel from './right-pane/ConsolePanel.svelte';
@@ -88,7 +88,7 @@
     lastCompileResult: $lastCompileResult,
     lastExecutionResult: $lastExecutionResult,
     canSendToStdin,
-    nativeExecutionEnabled: nativeExecutionEnabled(),
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
     workspaceError: $errorMessage
   });
   $: visualizerViewModel = buildVisualizerViewModel({
@@ -104,7 +104,7 @@
     currentTraceStepData,
     isTracing,
     traceErr,
-    nativeExecutionEnabled: nativeExecutionEnabled(),
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
     traceNotice
   });
   $: analysisViewModel = buildAnalysisViewModel({

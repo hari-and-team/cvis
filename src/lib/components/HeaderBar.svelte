@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, Code2, ExternalLink, Loader2, Play, UserRound } from 'lucide-svelte';
   import { isCompiling, isRunning, lastBinaryPath, userProfile } from '$lib/stores';
-  import { nativeExecutionEnabled } from '$lib/runtime-capabilities';
+  import { nativeExecutionEnabledStore } from '$lib/runtime-capabilities';
   import { createEventDispatcher } from 'svelte';
 
   const dispatch = createEventDispatcher<{
@@ -22,8 +22,6 @@
   function handleEditProfile() {
     dispatch('editProfile');
   }
-
-  const supportsNativeExecution = nativeExecutionEnabled();
 </script>
 
 <header class="header-bar">
@@ -34,7 +32,7 @@
     <div class="logo-text">
       <h1 class="title">C Cloud Compiler</h1>
       <span class="subtitle">
-        Interactive Visualizer{#if !supportsNativeExecution} · Trace-Only Deployment{/if}
+        Interactive Visualizer{#if !$nativeExecutionEnabledStore} · Trace-Only Deployment{/if}
       </span>
     </div>
   </div>
@@ -79,8 +77,8 @@
     <button
       class="btn btn-secondary"
       class:loading={$isCompiling}
-      disabled={!supportsNativeExecution || $isCompiling || $isRunning}
-      title={!supportsNativeExecution ? 'Compile is disabled in this deployment.' : undefined}
+      disabled={!$nativeExecutionEnabledStore || $isCompiling || $isRunning}
+      title={!$nativeExecutionEnabledStore ? 'Compile is disabled in this deployment.' : undefined}
       on:click={handleCompile}
     >
       {#if $isCompiling}
@@ -95,8 +93,8 @@
     <button
       class="btn btn-primary"
       class:running={$isRunning}
-      disabled={!supportsNativeExecution || $isCompiling || $isRunning || !$lastBinaryPath}
-      title={!supportsNativeExecution ? 'Run is disabled in this deployment.' : undefined}
+      disabled={!$nativeExecutionEnabledStore || $isCompiling || $isRunning || !$lastBinaryPath}
+      title={!$nativeExecutionEnabledStore ? 'Run is disabled in this deployment.' : undefined}
       on:click={handleRun}
     >
       {#if $isRunning}
@@ -126,7 +124,6 @@
     box-shadow: var(--shadow-soft);
   }
 
-  /* Logo Section */
   .logo-section {
     display: flex;
     align-items: center;
@@ -171,7 +168,6 @@
     font-weight: 500;
   }
 
-  /* Actions */
   .actions {
     display: flex;
     align-items: center;
@@ -247,7 +243,6 @@
     justify-content: center;
   }
 
-  /* Base Button Styles */
   .btn {
     display: flex;
     align-items: center;
@@ -291,7 +286,6 @@
     opacity: 0.9;
   }
 
-  /* Primary Button - Run */
   .btn-primary {
     background: color-mix(in srgb, var(--green) 14%, var(--bg-raised));
     border-color: color-mix(in srgb, var(--green) 24%, var(--border));
@@ -306,7 +300,7 @@
 
   .btn-primary:active:not(:disabled) {
     transform: translateY(0);
-    box-shadow: 
+    box-shadow:
       0 1px 4px rgba(43, 58, 37, 0.22),
       inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
@@ -327,7 +321,6 @@
     opacity: 0.6;
   }
 
-  /* Spin Animation */
   :global(.animate-spin) {
     animation: spin 1s linear infinite;
   }

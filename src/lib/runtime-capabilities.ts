@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/public';
+import { derived, get, writable } from 'svelte/store';
 
 export type ExecutionMode = 'full' | 'trace-only';
 
@@ -10,7 +11,7 @@ function normalizeExecutionMode(value: string | undefined): ExecutionMode | null
   return null;
 }
 
-export function getExecutionMode(): ExecutionMode {
+function getConfiguredExecutionMode(): ExecutionMode {
   const explicitMode = normalizeExecutionMode(env.PUBLIC_EXECUTION_MODE?.trim());
   if (explicitMode) {
     return explicitMode;
@@ -22,6 +23,66 @@ export function getExecutionMode(): ExecutionMode {
   }
 
   return 'trace-only';
+}
+
+export const executionMode = writable<ExecutionMode>(getConfiguredExecutionMode());
+export const nativeExecutionEnabledStore = derived(executionMode, (mode) => mode === 'full');
+
+let hydrationPromise: Promise<void> | null = null;
+
+export async function hydrateRuntimeCapabilities(): Promise<void> {
+  if (typeof window === 'undefined' || !import.meta.env.PROD) {
+    return;
+  }
+
+  if (hydrationPromise) {
+    return hydrationPromise;
+  }
+
+  hydrationPromise = (async () => {
+    try {
+      const response = await fetch('/health', {
+        headers: {
+          Accept: 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = (await response.json()) as {
+        executionMode?: unknown;
+        supportsCompileRun?: unknown;
+      };
+
+      const healthMode =
+        typeof payload.executionMode === 'string'
+          ? normalizeExecutionMode(payload.executionMode.trim())
+          : null;
+      const supportsCompileRun =
+        typeof payload.supportsCompileRun === 'boolean' ? payload.supportsCompileRun : null;
+
+      if (healthMode) {
+        executionMode.set(healthMode);
+        return;
+      }
+
+      if (supportsCompileRun === false) {
+        executionMode.set('trace-only');
+      } else if (supportsCompileRun === true) {
+        executionMode.set('full');
+      }
+    } catch {
+      // Keep configured mode if health probing fails.
+    }
+  })();
+
+  return hydrationPromise;
+}
+
+export function getExecutionMode(): ExecutionMode {
+  return get(executionMode);
 }
 
 export function nativeExecutionEnabled(): boolean {

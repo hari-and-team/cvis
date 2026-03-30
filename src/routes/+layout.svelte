@@ -7,7 +7,8 @@
   import OnboardingModal from '$lib/components/OnboardingModal.svelte';
   import RightPane from '$lib/components/RightPane.svelte';
   import {
-    nativeExecutionEnabled,
+    hydrateRuntimeCapabilities,
+    nativeExecutionEnabledStore,
     nativeExecutionUnavailableMessage
   } from '$lib/runtime-capabilities';
   import TraceControlDock from '$lib/components/TraceControlDock.svelte';
@@ -299,6 +300,7 @@
   }
 
   onMount(() => {
+    void hydrateRuntimeCapabilities();
     restoreProfileFromStorage();
     restoreDraftFromStorage();
     lastEditorCodeSnapshot = $editorCode;
@@ -355,7 +357,7 @@
     currentTraceStepData: $traceSteps[$currentStepIndex] ?? null,
     isTracing,
     traceErr,
-    nativeExecutionEnabled: nativeExecutionEnabled(),
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
     traceNotice
   });
 
@@ -410,7 +412,7 @@
     }
 
     if (requiresRuntimeReplay && traceInput.length === 0) {
-      traceNotice = nativeExecutionEnabled()
+      traceNotice = $nativeExecutionEnabledStore
         ? 'This program uses scanf(). Run it once in the Console or enter stdin in the Visualizer tab, then retrace.'
         : 'This program uses scanf(). Enter stdin in the Visualizer tab, then trace it again.';
       traceSteps.set([]);
@@ -463,7 +465,7 @@
       }
     }}
   />
-  {#if !nativeExecutionEnabled()}
+  {#if !$nativeExecutionEnabledStore}
     <div class="deployment-banner" role="status" aria-live="polite">
       {nativeExecutionUnavailableMessage()}
     </div>

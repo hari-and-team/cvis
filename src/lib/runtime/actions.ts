@@ -23,6 +23,7 @@ import {
   traceSteps
 } from '$lib/stores';
 import {
+  hydrateRuntimeCapabilities,
   nativeExecutionEnabled,
   nativeExecutionUnavailableMessage
 } from '$lib/runtime-capabilities';
@@ -235,6 +236,8 @@ export async function runCompileAction({
   code
 }: CompileRunActionParams): Promise<boolean> {
   try {
+    await hydrateRuntimeCapabilities();
+
     if (!nativeExecutionEnabled()) {
       errorMessage.set(nativeExecutionUnavailableMessage());
       lastCompileResult.set(null);
@@ -291,6 +294,8 @@ export async function runBinaryAction(binaryPath: string | null): Promise<void> 
   let consecutivePollFailures = 0;
 
   try {
+    await hydrateRuntimeCapabilities();
+
     if (!nativeExecutionEnabled()) {
       errorMessage.set(nativeExecutionUnavailableMessage());
       return;
