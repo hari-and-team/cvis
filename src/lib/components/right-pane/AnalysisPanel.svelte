@@ -9,16 +9,31 @@
   $: report = viewModel.report;
   $: dominantAnalysisSection = viewModel.dominantAnalysisSection;
   $: mainAnalysisSection = viewModel.mainAnalysisSection;
-  $: identityEvidence = viewModel.identityEvidence;
-  $: improvementItems = viewModel.improvementItems;
-  $: practiceSummary = viewModel.practiceSummary;
-  $: complexityFocusLabel = mainAnalysisSection ? 'main()' : viewModel.focusSectionLabel ?? 'Focus block';
+  $: identityEvidence = report.evidence.slice(0, 5);
+  $: confidencePercent = Math.round(report.confidence * 100);
+  $: primaryTypeLabel = report.primaryType;
+  $: improvementItems = [
+    ...report.reverseReport.safetyFindings,
+    ...report.reverseReport.optimizationFindings
+  ].slice(0, 6);
+  $: recommendedProblems = viewModel.recommendedProblems;
+  $: primaryRecommendation = recommendedProblems[0] ?? null;
+  $: alternateRecommendations = recommendedProblems.slice(1, 4);
+  $: complexityFocusLabel = mainAnalysisSection
+    ? 'main()'
+    : dominantAnalysisSection?.title ?? 'Focus block';
   $: complexityFocusTime = mainAnalysisSection
     ? mainAnalysisSection.estimatedTimeComplexity
     : dominantAnalysisSection?.estimatedTimeComplexity ?? report.timeComplexity;
   $: complexityFocusSpace = mainAnalysisSection
     ? mainAnalysisSection.estimatedSpaceComplexity
     : dominantAnalysisSection?.estimatedSpaceComplexity ?? report.spaceComplexity;
+  $: identityExplanation = dominantAnalysisSection
+    ? `${primaryTypeLabel} is the strongest match, with the clearest signal around ${dominantAnalysisSection.title}.`
+    : `${primaryTypeLabel} is the strongest current match based on the detected structure and control flow.`;
+  $: practiceHint =
+    report.reverseReport.sectionReviews[0]?.recommendation ??
+    'Use the mentor flow to turn the next recommendation into a guided checkpoint plan.';
 
   function findingSeverityLabel(value: 'info' | 'watch' | 'risk'): string {
     if (value === 'info') return 'Info';
@@ -44,7 +59,7 @@
             See the DSA type, complexity, weak spots, and next improvement in one calm view.
           </span>
         </div>
-        {#if practiceSummary.recommendation}
+        {#if primaryRecommendation}
           <div class="panel-intro-actions">
             <button
               type="button"
@@ -61,28 +76,30 @@
     <section class="analysis-card analysis-summary-card">
       <div class="analysis-header">
         <span class="analysis-title">Identity</span>
-        <span class="analysis-meta">{viewModel.confidencePercent}% confidence</span>
+        <span class="analysis-meta">{confidencePercent}% confidence</span>
       </div>
-      <div class="analysis-primary-label">{viewModel.primaryTypeLabel}</div>
-      <div class="analysis-summary-text">{viewModel.identityExplanation}</div>
+      <div class="analysis-primary-label">{primaryTypeLabel}</div>
+      <div class="analysis-summary-text">{identityExplanation}</div>
 
       <div class="analysis-inline-metrics">
-        {#if viewModel.implementationStyle}
+        {#if report.implementationStyle}
           <div class="analysis-inline-metric">
             <span class="analysis-inline-label">Implementation</span>
-            <span class="analysis-inline-value">{viewModel.implementationStyle}</span>
+            <span class="analysis-inline-value">{report.implementationStyle}</span>
           </div>
         {/if}
-        {#if viewModel.accessPattern}
+        {#if report.accessPattern}
           <div class="analysis-inline-metric">
             <span class="analysis-inline-label">Pattern</span>
-            <span class="analysis-inline-value">{viewModel.accessPattern}</span>
+            <span class="analysis-inline-value">{report.accessPattern}</span>
           </div>
         {/if}
-        {#if viewModel.focusSectionLabel}
+        {#if dominantAnalysisSection}
           <div class="analysis-inline-metric">
             <span class="analysis-inline-label">Strongest signal</span>
-            <span class="analysis-inline-value">{viewModel.focusSectionLabel}</span>
+            <span class="analysis-inline-value">
+              {dominantAnalysisSection.title} · L{dominantAnalysisSection.startLine}-{dominantAnalysisSection.endLine}
+            </span>
           </div>
         {/if}
       </div>
@@ -129,7 +146,9 @@
     <section class="analysis-card">
       <div class="analysis-header">
         <span class="analysis-title">Improve</span>
-        <span class="analysis-meta">{improvementItems.length} focus areas</span>
+        <span class="analysis-meta">
+          {viewModel.reverseRiskCount} risks · {viewModel.reverseOptimizationCount} optimizations
+        </span>
       </div>
       {#if improvementItems.length > 0}
         <div class="improvement-list">
@@ -141,9 +160,6 @@
                   {findingSeverityLabel(item.severity)}
                 </span>
               </div>
-              {#if item.location}
-                <div class="analysis-subtitle">{item.location}</div>
-              {/if}
               <div class="improvement-recommendation">{item.recommendation}</div>
               <div class="improvement-detail">{item.detail}</div>
             </article>
@@ -159,41 +175,41 @@
     <section class="analysis-card analysis-practice-card">
       <div class="analysis-header">
         <span class="analysis-title">Practice</span>
-        <span class="analysis-meta">{practiceSummary.queueCount} picks</span>
+        <span class="analysis-meta">{recommendedProblems.length} picks</span>
       </div>
 
-      {#if practiceSummary.recommendation}
+      {#if primaryRecommendation}
         <div class="practice-top">
           <div class="practice-copy">
             <div class="practice-title-row">
-              <div class="analysis-primary-label practice-title">{practiceSummary.recommendation.title}</div>
-              <span class="difficulty-pill {difficultyClass(practiceSummary.recommendation.difficulty)}">
-                {practiceSummary.recommendation.difficulty}
+              <div class="analysis-primary-label practice-title">{primaryRecommendation.title}</div>
+              <span class="difficulty-pill {difficultyClass(primaryRecommendation.difficulty)}">
+                {primaryRecommendation.difficulty}
               </span>
             </div>
-            <div class="recommendation-category">{practiceSummary.recommendation.category}</div>
-            <div class="analysis-summary-text">{practiceSummary.recommendation.reason}</div>
+            <div class="recommendation-category">{primaryRecommendation.category}</div>
+            <div class="analysis-summary-text">{primaryRecommendation.reason}</div>
           </div>
         </div>
 
         <div class="practice-progress-row">
-          <span class="practice-progress-pill">{practiceSummary.completionPercent}% complete</span>
-          <span class="practice-progress-text">{practiceSummary.selectionSummary}</span>
+          <span class="practice-progress-pill">Top pick</span>
+          <span class="practice-progress-text">
+            {viewModel.primaryTechniqueLabels.slice(0, 3).join(' · ') || 'Technique match ready'}
+          </span>
         </div>
 
-        {#if practiceSummary.currentMilestone}
+        {#if primaryRecommendation.milestones[0]}
           <div class="analysis-summary-hint analysis-summary-hint-block">
-            Current step: {practiceSummary.currentMilestone}
+            Start with: {primaryRecommendation.milestones[0]}
           </div>
         {/if}
 
-        {#if practiceSummary.hint}
-          <div class="analysis-note practice-note">{practiceSummary.hint}</div>
-        {/if}
+        <div class="analysis-note practice-note">{practiceHint}</div>
 
         <div class="recommendation-actions">
           <a
-            href={practiceSummary.recommendation.url}
+            href={primaryRecommendation.url}
             target="_blank"
             rel="noreferrer"
             class="recommendation-action recommendation-action-link"
@@ -209,10 +225,10 @@
           </button>
         </div>
 
-        {#if practiceSummary.alternateRecommendations.length > 0}
+        {#if alternateRecommendations.length > 0}
           <div class="analysis-evidence-label">Other good next picks</div>
           <div class="practice-option-row">
-            {#each practiceSummary.alternateRecommendations as recommendation}
+            {#each alternateRecommendations as recommendation}
               <button
                 type="button"
                 class="practice-option-btn"

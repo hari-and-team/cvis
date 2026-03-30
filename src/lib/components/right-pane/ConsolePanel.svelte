@@ -23,6 +23,7 @@
   $: compileSummary = viewModel.compileSummary;
   $: runSummary = viewModel.runSummary;
   $: canSendToStdin = viewModel.canSendToStdin;
+  $: nativeExecutionEnabled = viewModel.nativeExecutionEnabled;
   $: workspaceError = viewModel.workspaceError;
   $: renderedOutput = `${output}${pendingRunInputEcho}${canSendToStdin ? terminalInputBuffer : ''}`;
 
@@ -240,7 +241,13 @@
       <div class="empty-output">
         <Code2 size={28} class="empty-icon" />
         <span class="empty-title">Console is idle</span>
-        <span class="empty-hint">Compile to validate, then run to start a live console session</span>
+        <span class="empty-hint">
+          {#if nativeExecutionEnabled}
+            Compile to validate, then run to start a live console session
+          {:else}
+            This deployment is trace-only. Use the Visualizer tab to interpret code and provide stdin there when needed.
+          {/if}
+        </span>
       </div>
     {/if}
   </div>

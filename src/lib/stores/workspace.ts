@@ -2,7 +2,7 @@ import { writable } from 'svelte/store';
 
 export const editorCode = writable<string>('');
 
-export type WorkspaceRightPaneTab = 'console' | 'visualizer' | 'analysis';
+export type WorkspaceRightPaneTab = 'console' | 'visualizer' | 'analysis' | 'mentor';
 export const rightPaneTab = writable<WorkspaceRightPaneTab>('visualizer');
 
 export type SyncStatus = 'local-only' | 'saved' | 'conflict';

@@ -3,17 +3,68 @@
 A web-based visualization tool for learning Data Structures and Algorithms in C.
 
 ## Tech Stack
-- **Frontend:** SvelteKit + TypeScript + Tailwind CSS + Vite + Node adapter
-- **Backend:** Express.js + Node.js
+- **Frontend:** SvelteKit + TypeScript + Tailwind CSS + Vite
+- **API:** SvelteKit server routes on Vercel for trace + analysis
+- **Optional Backend:** Express.js + Node.js for GCC compile/run
 - **Compiler:** GCC (Docker-based or local)
 
 ## Features
 - Interactive DSA visualization
-- Real-time C code compilation and execution
-- Server-side GCC compilation via Express backend
+- Real-time trace visualization and analysis with same-origin SvelteKit APIs
+- Optional C compilation and execution with an external GCC backend
 - Docker-based GCC environment for consistent cross-platform behavior
 - Learning-friendly UI with syntax highlighting
 - Optional AI-backed code identification and section understanding in the Analysis tab
+
+---
+
+## Vercel Deployment
+
+This repo now deploys cleanly to **one Vercel project** without a separate backend.
+
+**What works on Vercel by default**
+- Trace Execution
+- Analysis tab
+- Optional OpenAI-backed intent analysis
+- Per-user drafts and profile data in browser local storage
+
+**What is intentionally disabled in the default Vercel deployment**
+- `Compile`
+- `Run`
+- live stdin runtime sessions backed by GCC binaries
+
+That limitation is deliberate: Vercel is a good fit for the stateless interpreter and analysis endpoints, but not for spawning and coordinating multi-user native GCC processes.
+
+### Recommended Vercel setup
+
+1. Push this repo to GitHub.
+2. Import the repo into Vercel.
+3. Keep the default framework detection for SvelteKit.
+4. Add env vars only if needed:
+
+```bash
+# optional: AI-powered analysis
+OPENAI_API_KEY=your_key_here
+OPENAI_ANALYZE_MODEL=gpt-5-mini
+
+# optional: force trace-only mode explicitly
+PUBLIC_EXECUTION_MODE=trace-only
+```
+
+5. Deploy.
+
+No separate backend URL is required for the default Vercel setup.
+
+### If you still want Compile + Run
+
+Deploy the existing Express backend separately on a service that supports long-lived Node processes plus GCC access, then point the frontend at it:
+
+```bash
+PUBLIC_API_BASE=https://your-backend.example.com
+PUBLIC_EXECUTION_MODE=full
+```
+
+In that mode the frontend will re-enable `Compile` and `Run`, while Vercel still serves the app UI.
 
 ---
 
@@ -211,7 +262,9 @@ so you can verify which compiler is active.
 
 ### Production Deployment
 
-The frontend now has an explicit Node deployment target, so the production build is runnable instead of relying on adapter auto-detection.
+For the simplest production deployment, use **Vercel** and the trace-only mode described above.
+
+If you are not using Vercel and want the legacy split deployment with a separate backend, the app is still runnable that way as well.
 
 **Build the app**
 
@@ -240,17 +293,10 @@ npm run start:prod
 # frontend runtime API base when frontend and backend are split services
 PUBLIC_API_BASE=https://your-backend.example.com
 
-# execution mode
-# - interactive: live console sessions against a stateful backend
-# - serverless: one-shot compile+run for Vercel-style stateless deployments
-PUBLIC_EXECUTION_MODE=interactive
-
 # backend CORS / browser origin configuration
 FRONTEND_URL=https://your-frontend.example.com
 # or multiple origins:
 CORS_ORIGINS=https://app.example.com,https://staging.example.com
-# optional regex for preview URLs:
-CORS_ORIGIN_REGEX=^https://your-frontend-.*\.vercel\.app$
 
 # optional ports and hosts
 FRONTEND_PORT=3000
@@ -278,56 +324,6 @@ HTTPS_PUBLIC_ORIGIN=https://api.example.com
 - proxy `/api` to the backend if you want same-origin browser requests
 - otherwise set `PUBLIC_API_BASE` so the frontend calls the backend directly
 - use HTTPS for both the frontend and backend in production; if TLS terminates at the proxy, set `TRUST_PROXY=true` and `REQUIRE_HTTPS=true` on the backend
-
-### Vercel Deployment Shapes
-
-The repo is now wired for Vercel in two practical ways:
-
-**Option A: Single Vercel project (frontend + API functions)**
-- SvelteKit uses `@sveltejs/adapter-vercel`
-- the repo exposes backend routes through `api/[[...path]].ts`
-- keep `PUBLIC_API_BASE` empty so the browser stays same-origin
-- set `PUBLIC_EXECUTION_MODE=serverless`
-- good fit for:
-  - `POST /api/trace`
-  - `POST /api/analyze/intent`
-  - non-interactive compile/run through `POST /api/execute`
-
-**Important limitation**
-- live stdin sessions (`/api/run/start`, `/api/run/poll`, `/api/run/input`, `/api/run/eof`, `/api/run/stop`) are disabled by default on Vercel because they rely on in-memory session state and are not reliable in a serverless runtime
-- programs that need `scanf`, `getchar`, `fgets`, or similar live console input still need a stateful backend host
-
-**Option B: Split Vercel projects**
-- deploy the frontend from the repo root
-- deploy the backend as a separate project or stateful Node host
-- set `PUBLIC_API_BASE=https://your-backend.example.com`
-- set backend CORS with `FRONTEND_URL`, `CORS_ORIGINS`, and optionally `CORS_ORIGIN_REGEX` for preview deployments
-- keep `PUBLIC_EXECUTION_MODE=interactive` when the backend supports live sessions
-
-### Vercel Env Setup
-
-**Frontend project**
-
-```bash
-# single-project Vercel deploy
-PUBLIC_API_BASE=
-PUBLIC_EXECUTION_MODE=serverless
-
-# split-project deploy
-# PUBLIC_API_BASE=https://your-backend.example.com
-# PUBLIC_EXECUTION_MODE=interactive
-```
-
-**Backend project / API runtime**
-
-```bash
-FRONTEND_URL=https://your-frontend.example.com
-CORS_ORIGINS=https://your-frontend.example.com
-# optional preview support
-CORS_ORIGIN_REGEX=^https://your-frontend-.*\.vercel\.app$
-TRUST_PROXY=true
-REQUIRE_HTTPS=true
-```
 
 **Smoke test the production build locally**
 
@@ -428,40 +424,6 @@ Execute a compiled binary.
 Notes:
 - `binaryPath` should be the value returned by `POST /api/compile`.
 - `input` must be a string when provided.
-
-### `POST /api/execute`
-Compile and execute C code in a single request.
-
-This endpoint is intended for stateless deployments such as Vercel, where a compiled binary path should not be reused across separate requests.
-
-**Request:**
-```json
-{
-  "code": "int main() { return 0; }",
-  "args": [],
-  "input": ""
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "compile": {
-    "success": true,
-    "output": "Compiled successfully",
-    "errors": [],
-    "warnings": [],
-    "compilationTime": 41
-  },
-  "execution": {
-    "stdout": "",
-    "stderr": "",
-    "exitCode": 0,
-    "executionTime": 3
-  }
-}
-```
 
 ### `POST /api/trace`
 Trace execution using the built-in C interpreter.

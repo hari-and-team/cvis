@@ -6,8 +6,6 @@ import type {
   CompileResult,
   ExecutionRequest,
   ExecutionResult,
-  SourceExecutionRequest,
-  SourceExecutionResult,
   RunSessionEofResult,
   RunSessionInputRequest,
   RunSessionInputResult,
@@ -23,9 +21,6 @@ import type {
 const API_BASE = (env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || '')
   .trim()
   .replace(/\/$/, '');
-const EXECUTION_MODE_RAW = (env.PUBLIC_EXECUTION_MODE || import.meta.env.VITE_EXECUTION_MODE || '')
-  .trim()
-  .toLowerCase();
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 const REQUEST_TIMEOUTS_MS: Record<string, number> = {
   default: 15_000,
@@ -40,11 +35,6 @@ const REQUEST_TIMEOUTS_MS: Record<string, number> = {
   runStop: 6_000,
   runEof: 6_000
 } as const;
-
-export const EXECUTION_MODE =
-  EXECUTION_MODE_RAW === 'serverless' || EXECUTION_MODE_RAW === 'stateless'
-    ? 'serverless'
-    : 'interactive';
 
 function isLocalHostname(hostname: string): boolean {
   return (
@@ -237,14 +227,6 @@ export async function runBinary(req: ExecutionRequest): Promise<ExecutionResult>
     headers: JSON_HEADERS,
     body: JSON.stringify(req)
   }, 'Run', REQUEST_TIMEOUTS_MS.run);
-}
-
-export async function executeCode(req: SourceExecutionRequest): Promise<SourceExecutionResult> {
-  return requestJson<SourceExecutionResult>('/api/execute', {
-    method: 'POST',
-    headers: JSON_HEADERS,
-    body: JSON.stringify(req)
-  }, 'Execute', REQUEST_TIMEOUTS_MS.run);
 }
 
 export async function traceCode(req: TraceRequest): Promise<TraceResult> {

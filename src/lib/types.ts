@@ -20,12 +20,6 @@ export interface ExecutionRequest {
   input?: string;
 }
 
-export interface SourceExecutionRequest {
-  code: string;
-  args?: string[];
-  input?: string;
-}
-
 export interface ExecutionResult {
   stdout: string;
   stderr: string;
@@ -34,12 +28,6 @@ export interface ExecutionResult {
   peakMemoryBytes?: number | null;
   inputClosed?: boolean;
   completionReason?: string | null;
-}
-
-export interface SourceExecutionResult {
-  success: boolean;
-  compile: CompileResult;
-  execution: ExecutionResult | null;
 }
 
 export interface RunSessionStartRequest {

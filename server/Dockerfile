@@ -16,6 +16,6 @@ COPY server/ ./
 EXPOSE 3001
 
 ENV DOCKER_ENV=true
-ENV NODE_ENV=development
+ENV NODE_ENV=production
 
 CMD ["npm", "start"]

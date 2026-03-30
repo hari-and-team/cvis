@@ -1,3 +1,4 @@
+// @ts-nocheck
 export const MAX_TRACE_ARRAY_ALLOCATION_LENGTH = 50_000;
 export const MAX_TRACE_ARRAY_SNAPSHOT_LENGTH = 32;
 const TRACE_SNAPSHOT_DEPTH = 4;

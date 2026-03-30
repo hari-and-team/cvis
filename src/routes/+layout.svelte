@@ -6,6 +6,11 @@
   import HeaderBar from '$lib/components/HeaderBar.svelte';
   import OnboardingModal from '$lib/components/OnboardingModal.svelte';
   import RightPane from '$lib/components/RightPane.svelte';
+  import {
+    hydrateRuntimeCapabilities,
+    nativeExecutionEnabledStore,
+    nativeExecutionUnavailableMessage
+  } from '$lib/runtime-capabilities';
   import TraceControlDock from '$lib/components/TraceControlDock.svelte';
   import { buildVisualizerViewModel } from '$lib/app-shell/right-pane/view-models';
   import { runBinaryAction, runCompileAction, runTraceAction } from '$lib/runtime/actions';
@@ -23,32 +28,24 @@
     milestoneProgress,
     pendingRunInputEcho,
     profileEditorOpen,
+    traceInputDraft,
     lastCompileResult,
     lastExecutionResult,
     runConsoleTranscript,
     runSessionId,
     userProfile
   } from '$lib/stores';
-  import type { TraceReadinessResult, UserProfile } from '$lib/types';
+  import type { UserProfile } from '$lib/types';
 
   let isTracing = false;
   let traceErr: string | null = null;
   let traceNotice: string | null = null;
-  let traceReadiness: TraceReadinessResult | null = null;
-  let showTraceReadinessPrompt = false;
   let persistenceReady = false;
   let persistTimer: number | null = null;
   let lastEditorCodeSnapshot = '';
   let lastPersistedDraftRaw = '';
   let competingDraft: PersistedDraft | null = null;
   let competingDraftSavedAtLabel = '';
-  let mainRef: HTMLDivElement | null = null;
-  let isResizingPanels = false;
-  let editorPaneWidthPercent = 50;
-
-  const LAYOUT_SPLIT_STORAGE_KEY = 'cvis:layout:editor-width:v1';
-  const MIN_EDITOR_WIDTH_PX = 360;
-  const MIN_RIGHT_PANE_WIDTH_PX = 360;
 
   const DRAFT_STORAGE_KEY = 'cvis:draft:v1';
   const DRAFT_BACKUP_STORAGE_KEY = 'cvis:draft:backup:v1';
@@ -56,11 +53,12 @@
 
   interface PersistedDraft {
     code: string;
-    rightPaneTab: 'console' | 'visualizer' | 'analysis';
+    rightPaneTab: 'console' | 'visualizer' | 'analysis' | 'mentor';
     mentorSelectionMode: 'guided' | 'manual';
     selectedPracticeProblemId: string | null;
     activeMilestoneIndex: number;
     milestoneProgress: Record<string, boolean>;
+    traceInputDraft: string;
     savedAt: number;
   }
 
@@ -72,6 +70,7 @@
       selectedPracticeProblemId: $selectedPracticeProblemId,
       activeMilestoneIndex: $activeMilestoneIndex,
       milestoneProgress: $milestoneProgress,
+      traceInputDraft: $traceInputDraft,
       savedAt
     };
   }
@@ -87,6 +86,7 @@
     selectedPracticeProblemId.set(draft.selectedPracticeProblemId);
     activeMilestoneIndex.set(draft.activeMilestoneIndex);
     milestoneProgress.set(draft.milestoneProgress);
+    traceInputDraft.set(draft.traceInputDraft);
   }
 
   function normalizeMilestoneProgress(value: unknown): Record<string, boolean> {
@@ -172,111 +172,6 @@
     }
   }
 
-  function clampEditorPaneWidth(percent: number) {
-    if (!mainRef) {
-      return Math.max(35, Math.min(65, percent));
-    }
-
-    const containerWidth = mainRef.clientWidth;
-    if (containerWidth <= 0) {
-      return Math.max(35, Math.min(65, percent));
-    }
-
-    const minPercent = (MIN_EDITOR_WIDTH_PX / containerWidth) * 100;
-    const maxPercent = 100 - (MIN_RIGHT_PANE_WIDTH_PX / containerWidth) * 100;
-
-    return Math.max(minPercent, Math.min(maxPercent, percent));
-  }
-
-  function persistLayoutSplit() {
-    if (!browser) return;
-
-    try {
-      localStorage.setItem(LAYOUT_SPLIT_STORAGE_KEY, String(editorPaneWidthPercent));
-    } catch (err) {
-      console.error('Failed to persist layout split:', err);
-    }
-  }
-
-  function restoreLayoutSplit() {
-    if (!browser) return;
-
-    try {
-      const raw = localStorage.getItem(LAYOUT_SPLIT_STORAGE_KEY);
-      if (!raw) return;
-
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed)) return;
-      editorPaneWidthPercent = clampEditorPaneWidth(parsed);
-    } catch (err) {
-      console.error('Failed to restore layout split:', err);
-    }
-  }
-
-  function resizeFromPointer(clientX: number) {
-    if (!mainRef) return;
-
-    const bounds = mainRef.getBoundingClientRect();
-    const relativeX = clientX - bounds.left;
-    const nextPercent = (relativeX / bounds.width) * 100;
-    editorPaneWidthPercent = clampEditorPaneWidth(nextPercent);
-  }
-
-  function stopPanelResize() {
-    if (!browser || !isResizingPanels) return;
-
-    isResizingPanels = false;
-    window.removeEventListener('pointermove', handlePanelResizeMove);
-    window.removeEventListener('pointerup', stopPanelResize);
-    window.removeEventListener('pointercancel', stopPanelResize);
-    persistLayoutSplit();
-  }
-
-  function handlePanelResizeMove(event: PointerEvent) {
-    resizeFromPointer(event.clientX);
-  }
-
-  function startPanelResize(event: PointerEvent) {
-    if (!browser || !mainRef) return;
-    if (window.innerWidth <= 960) return;
-
-    event.preventDefault();
-    isResizingPanels = true;
-    resizeFromPointer(event.clientX);
-    window.addEventListener('pointermove', handlePanelResizeMove);
-    window.addEventListener('pointerup', stopPanelResize);
-    window.addEventListener('pointercancel', stopPanelResize);
-  }
-
-  function resetPanelResize() {
-    editorPaneWidthPercent = 50;
-    persistLayoutSplit();
-  }
-
-  function handleResizerKeydown(event: KeyboardEvent) {
-    if (window.innerWidth <= 960) return;
-
-    if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      editorPaneWidthPercent = clampEditorPaneWidth(editorPaneWidthPercent - 2);
-      persistLayoutSplit();
-      return;
-    }
-
-    if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      editorPaneWidthPercent = clampEditorPaneWidth(editorPaneWidthPercent + 2);
-      persistLayoutSplit();
-      return;
-    }
-
-    if (event.key === 'Home') {
-      event.preventDefault();
-      editorPaneWidthPercent = clampEditorPaneWidth(50);
-      persistLayoutSplit();
-    }
-  }
-
   function parseDraft(raw: string | null): PersistedDraft | null {
     if (!raw) return null;
 
@@ -284,14 +179,12 @@
       const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
       if (!parsed || typeof parsed !== 'object') return null;
       if (typeof parsed.code !== 'string') return null;
-      const parsedRightPaneTab = String(parsed.rightPaneTab);
-      const normalizedRightPaneTab = parsedRightPaneTab === 'mentor' ? 'analysis' : parsedRightPaneTab;
-      if (!['console', 'visualizer', 'analysis'].includes(normalizedRightPaneTab)) return null;
+      if (!['console', 'visualizer', 'analysis', 'mentor'].includes(String(parsed.rightPaneTab))) return null;
       if (!['guided', 'manual'].includes(String(parsed.mentorSelectionMode ?? 'guided'))) return null;
 
       return {
         code: parsed.code,
-        rightPaneTab: normalizedRightPaneTab as PersistedDraft['rightPaneTab'],
+        rightPaneTab: parsed.rightPaneTab as PersistedDraft['rightPaneTab'],
         mentorSelectionMode: parsed.mentorSelectionMode as PersistedDraft['mentorSelectionMode'] ?? 'guided',
         selectedPracticeProblemId:
           typeof parsed.selectedPracticeProblemId === 'string' ? parsed.selectedPracticeProblemId : null,
@@ -300,6 +193,7 @@
             ? Math.floor(parsed.activeMilestoneIndex)
             : 0,
         milestoneProgress: normalizeMilestoneProgress(parsed.milestoneProgress),
+        traceInputDraft: typeof parsed.traceInputDraft === 'string' ? parsed.traceInputDraft : '',
         savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now()
       };
     } catch {
@@ -406,9 +300,9 @@
   }
 
   onMount(() => {
+    void hydrateRuntimeCapabilities();
     restoreProfileFromStorage();
     restoreDraftFromStorage();
-    restoreLayoutSplit();
     lastEditorCodeSnapshot = $editorCode;
     persistenceReady = true;
     window.addEventListener('storage', handleStorageConflict);
@@ -421,7 +315,6 @@
     if (persistTimer !== null) {
       clearTimeout(persistTimer);
     }
-    stopPanelResize();
     if (browser && persistenceReady) {
       persistDraftToStorage();
     }
@@ -439,6 +332,7 @@
     $selectedPracticeProblemId;
     $activeMilestoneIndex;
     $milestoneProgress;
+    $traceInputDraft;
     scheduleDraftPersist();
   }
 
@@ -448,8 +342,6 @@
     lastRunInputTranscript.set('');
     traceErr = null;
     traceNotice = null;
-    traceReadiness = null;
-    showTraceReadinessPrompt = false;
   }
 
   $: floatingVisualizerViewModel = buildVisualizerViewModel({
@@ -459,14 +351,14 @@
     lastExecutionResult: $lastExecutionResult,
     lastCompileResult: $lastCompileResult,
     lastRunInputTranscript: $lastRunInputTranscript,
+    manualTraceInput: $traceInputDraft,
     pendingRunInputEcho: $pendingRunInputEcho,
     traceSteps: $traceSteps,
     currentTraceStepData: $traceSteps[$currentStepIndex] ?? null,
     isTracing,
     traceErr,
-    traceNotice,
-    traceReadiness,
-    showTraceReadinessPrompt
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
+    traceNotice
   });
 
   function resetTraceUiState() {
@@ -475,8 +367,6 @@
     isPlaying.set(false);
     traceErr = null;
     traceNotice = null;
-    traceReadiness = null;
-    showTraceReadinessPrompt = false;
   }
 
   async function handleCompile() {
@@ -485,7 +375,7 @@
     resetTraceUiState();
     rightPaneTab.set('console');
 
-    return runCompileAction({
+    await runCompileAction({
       code: $editorCode
     });
   }
@@ -496,27 +386,22 @@
     resetTraceUiState();
     rightPaneTab.set('console');
 
-    await runBinaryAction({
-      binaryPath: $lastBinaryPath,
-      code: $editorCode
-    });
+    await runBinaryAction($lastBinaryPath);
   }
 
-  async function handleTrace(force: boolean | Event = false) {
+  async function handleTrace() {
     if (!browser) return;
-    const shouldForce = force === true;
 
     traceErr = null;
     traceNotice = null;
-    if (!shouldForce) {
-      traceReadiness = null;
-      showTraceReadinessPrompt = false;
-    }
     isPlaying.set(false);
     rightPaneTab.set('visualizer');
 
     const requiresRuntimeReplay = /\bscanf\s*\(/.test($editorCode);
-    const traceInput = $lastRunInputTranscript;
+    const hasManualTraceInput = $traceInputDraft.length > 0;
+    const staleCapturedInput = $lastExecutionResult?.completionReason === 'stopped';
+    const traceInput =
+      staleCapturedInput && hasManualTraceInput ? $traceInputDraft : $lastRunInputTranscript || $traceInputDraft;
 
     if ($runSessionId) {
       traceNotice =
@@ -527,13 +412,15 @@
     }
 
     if (requiresRuntimeReplay && traceInput.length === 0) {
-      traceNotice = 'This program uses scanf(). Run it once in the Console, enter stdin there, then retrace to reuse that exact input.';
+      traceNotice = $nativeExecutionEnabledStore
+        ? 'This program uses scanf(). Run it once in the Console or enter stdin in the Visualizer tab, then retrace.'
+        : 'This program uses scanf(). Enter stdin in the Visualizer tab, then trace it again.';
       traceSteps.set([]);
       currentStepIndex.set(0);
       return;
     }
 
-    if (requiresRuntimeReplay && $lastExecutionResult?.completionReason === 'stopped') {
+    if (requiresRuntimeReplay && staleCapturedInput && !hasManualTraceInput) {
       traceNotice =
         'The latest Console run was stopped before the program finished, so its stdin replay may be incomplete. Run it again to completion, or send EOF, then trace again.';
       traceSteps.set([]);
@@ -546,30 +433,12 @@
     try {
       const result = await runTraceAction({
         code: $editorCode,
-        input: traceInput,
-        force: shouldForce
+        input: traceInput
       });
       traceErr = result.traceErr;
-      traceReadiness = result.readiness;
-      showTraceReadinessPrompt = Boolean(
-        result.readiness && result.readiness.status !== 'supported' && !result.didTrace
-      );
     } finally {
       isTracing = false;
     }
-  }
-
-  async function handleCompileAndRunExact() {
-    if (!browser) return;
-
-    const compileSucceeded = await handleCompile();
-    if (compileSucceeded) {
-      await handleRun();
-    }
-  }
-
-  function handleDismissTraceReadiness() {
-    showTraceReadinessPrompt = false;
   }
 
   function handleProfileSave(event: CustomEvent<{ profile: UserProfile }>) {
@@ -596,6 +465,11 @@
       }
     }}
   />
+  {#if !$nativeExecutionEnabledStore}
+    <div class="deployment-banner" role="status" aria-live="polite">
+      {nativeExecutionUnavailableMessage()}
+    </div>
+  {/if}
   {#if competingDraft}
     <div class="draft-conflict-banner" role="status" aria-live="polite">
       <div class="draft-conflict-copy">
@@ -615,47 +489,20 @@
       </div>
     </div>
   {/if}
-  <div
-    bind:this={mainRef}
-    class="main"
-    class:resizing={isResizingPanels}
-    style="--editor-pane-width: {editorPaneWidthPercent}%; --right-pane-width: {100 - editorPaneWidthPercent}%;"
-  >
-    <div class="pane-shell editor-shell">
-      <div class="workspace-column">
-        <EditorPane />
-        <div class="execution-dock">
-          <TraceControlDock viewModel={floatingVisualizerViewModel} onTrace={handleTrace} />
-        </div>
+  <div class="main">
+    <div class="workspace-column">
+      <EditorPane />
+      <div class="execution-dock">
+        <TraceControlDock viewModel={floatingVisualizerViewModel} onTrace={handleTrace} />
       </div>
     </div>
-
-    <button
-      type="button"
-      class="pane-resizer"
-      aria-label="Resize editor and right panel"
-      title="Drag to resize panels. Double-click to reset."
-      on:pointerdown={startPanelResize}
-      on:dblclick={resetPanelResize}
-      on:keydown={handleResizerKeydown}
-    >
-      <span class="pane-resizer-grip"></span>
-    </button>
-
-    <div class="pane-shell right-shell">
-      <RightPane
-        on:trace={(event) => handleTrace(event.detail?.force === true)}
-        on:runexact={handleCompileAndRunExact}
-        on:dismisstracereadiness={handleDismissTraceReadiness}
-        traceSteps={$traceSteps}
-        currentStep={$currentStepIndex}
-        {isTracing}
-        {traceErr}
-        {traceNotice}
-        {traceReadiness}
-        {showTraceReadinessPrompt}
-      />
-    </div>
+    <RightPane
+      traceSteps={$traceSteps}
+      currentStep={$currentStepIndex}
+      {isTracing}
+      {traceErr}
+      {traceNotice}
+    />
   </div>
   <slot />
 </div>
@@ -681,25 +528,11 @@
     flex: 1;
     overflow: hidden;
     min-height: 0;
-    min-width: 0;
-  }
-
-  .main.resizing,
-  .main.resizing * {
-    cursor: col-resize;
-    user-select: none;
-  }
-
-  .pane-shell {
-    min-width: 0;
-    height: 100%;
-    overflow: hidden;
   }
 
   .workspace-column {
-    width: 100%;
+    width: 50%;
     min-width: 0;
-    height: 100%;
     display: flex;
     flex-direction: column;
     background: #282c34;
@@ -716,59 +549,6 @@
     border-top: 1px solid rgba(92, 99, 112, 0.45);
   }
 
-  .editor-shell {
-    flex: 0 0 var(--editor-pane-width);
-    min-width: 360px;
-  }
-
-  .right-shell {
-    flex: 0 0 var(--right-pane-width);
-    min-width: 360px;
-  }
-
-  .pane-resizer {
-    position: relative;
-    flex: 0 0 12px;
-    border: none;
-    padding: 0;
-    background: color-mix(in srgb, var(--bg-deep) 98%, transparent);
-    border-left: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
-    border-right: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
-    cursor: col-resize;
-  }
-
-  .pane-resizer::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--blue) 6%, transparent) 0%,
-      transparent 100%
-    );
-    opacity: 0;
-    transition: opacity 0.18s ease;
-  }
-
-  .pane-resizer:hover::before,
-  .main.resizing .pane-resizer::before {
-    opacity: 1;
-  }
-
-  .pane-resizer-grip {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 4px;
-    height: 44px;
-    transform: translate(-50%, -50%);
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--text-dim) 72%, var(--border));
-    box-shadow:
-      -3px 0 0 color-mix(in srgb, var(--text-dim) 40%, transparent),
-      3px 0 0 color-mix(in srgb, var(--text-dim) 40%, transparent);
-  }
-
   .draft-conflict-banner {
     display: flex;
     align-items: center;
@@ -777,6 +557,15 @@
     padding: 10px 16px;
     background: linear-gradient(135deg, rgba(209, 154, 102, 0.16), rgba(224, 108, 117, 0.14));
     border-bottom: 1px solid rgba(209, 154, 102, 0.28);
+  }
+
+  .deployment-banner {
+    padding: 10px 16px;
+    background: rgba(97, 175, 239, 0.14);
+    border-bottom: 1px solid rgba(97, 175, 239, 0.22);
+    color: #dceeff;
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .draft-conflict-copy {
@@ -807,7 +596,7 @@
 
   .draft-conflict-btn {
     border: none;
-    border-radius: var(--radius-control);
+    border-radius: 8px;
     padding: 8px 12px;
     font-size: 11px;
     font-weight: 700;
@@ -858,28 +647,6 @@
 
     .draft-conflict-btn {
       flex: 1;
-    }
-  }
-
-  @media (max-width: 960px) {
-    .main {
-      flex-direction: column;
-    }
-
-    .editor-shell,
-    .right-shell {
-      min-width: 0;
-      flex: 1 1 auto;
-      width: 100%;
-    }
-
-    .workspace-column {
-      border-right: none;
-      border-bottom: 1px solid #3e4451;
-    }
-
-    .pane-resizer {
-      display: none;
     }
   }
 </style>

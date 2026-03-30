@@ -2,7 +2,6 @@ import type { AppLike } from '../lib/http/http-types.ts';
 import {
   analyzeIntentHandler,
   compileHandler,
-  executeHandler,
   healthHandler,
   runEofHandler,
   runHandler,
@@ -17,7 +16,6 @@ import {
 export function registerRoutes(app: AppLike): void {
   app.get('/health', healthHandler);
   app.post('/api/compile', compileHandler);
-  app.post('/api/execute', executeHandler);
   app.post('/api/run', runHandler);
   app.post('/api/run/start', runStartHandler);
   app.get('/api/run/poll', runPollHandler);

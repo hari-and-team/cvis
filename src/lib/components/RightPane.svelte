@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from 'svelte';
-  import type { TraceReadinessResult, TraceStep } from '$lib/types';
+  import { onDestroy } from 'svelte';
+  import type { TraceStep } from '$lib/types';
   import {
     activeMilestoneIndex,
     editorCode,
@@ -15,6 +15,7 @@
     runConsoleTranscript,
     runSessionId,
     selectedPracticeProblemId,
+    traceInputDraft,
     userProfile
   } from '$lib/stores';
   import { analyzeUnifiedProgram } from '$lib/analysis/unified-analysis';
@@ -27,32 +28,28 @@
     type IntentExplainerViewModel
   } from '$lib/app-shell/right-pane/view-models';
   import {
-    firstIncompleteMilestoneIndex as getFirstIncompleteMilestoneIndex
+    firstIncompleteMilestoneIndex as getFirstIncompleteMilestoneIndex,
+    isMilestoneComplete as isMentorMilestoneComplete,
+    milestoneKey
   } from '$lib/mentor/view-model';
   import {
     interruptRuntimeSession,
     sendRuntimeEof,
     sendRuntimeInputLine
   } from '$lib/runtime/actions';
+  import { nativeExecutionEnabledStore } from '$lib/runtime-capabilities';
   import { RIGHT_PANE_TABS } from './right-pane-config';
   import './right-pane/panels.css';
   import ConsolePanel from './right-pane/ConsolePanel.svelte';
   import VisualizerPanel from './right-pane/VisualizerPanel.svelte';
   import AnalysisPanel from './right-pane/AnalysisPanel.svelte';
+  import MentorPanel from './right-pane/MentorPanel.svelte';
 
   export let traceSteps: TraceStep[] = [];
   export let currentStep = 0;
   export let isTracing = false;
   export let traceErr: string | null = null;
   export let traceNotice: string | null = null;
-  export let traceReadiness: TraceReadinessResult | null = null;
-  export let showTraceReadinessPrompt = false;
-
-  const dispatch = createEventDispatcher<{
-    trace: { force?: boolean };
-    runexact: void;
-    dismisstracereadiness: void;
-  }>();
 
   let prevMentorProblemId: string | null = null;
   const intentExplainer = createIntentExplainerController();
@@ -91,6 +88,7 @@
     lastCompileResult: $lastCompileResult,
     lastExecutionResult: $lastExecutionResult,
     canSendToStdin,
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
     workspaceError: $errorMessage
   });
   $: visualizerViewModel = buildVisualizerViewModel({
@@ -100,14 +98,19 @@
     lastExecutionResult: $lastExecutionResult,
     lastCompileResult: $lastCompileResult,
     lastRunInputTranscript: $lastRunInputTranscript,
+    manualTraceInput: $traceInputDraft,
     pendingRunInputEcho: $pendingRunInputEcho,
     traceSteps,
     currentTraceStepData,
     isTracing,
     traceErr,
-    traceNotice,
-    traceReadiness,
-    showTraceReadinessPrompt
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
+    traceNotice
+  });
+  $: analysisViewModel = buildAnalysisViewModel({
+    editorCode: $editorCode,
+    analysis: unifiedAnalysis,
+    intentExplainer: intentExplainerState
   });
   $: mentorViewModel = buildMentorPanelViewModel({
     analysis: unifiedAnalysis,
@@ -116,12 +119,6 @@
     selectedPracticeProblemId: $selectedPracticeProblemId,
     activeMilestoneIndex: $activeMilestoneIndex,
     milestoneProgress: $milestoneProgress
-  });
-  $: analysisViewModel = buildAnalysisViewModel({
-    editorCode: $editorCode,
-    analysis: unifiedAnalysis,
-    intentExplainer: intentExplainerState,
-    mentor: mentorViewModel
   });
   $: recommendedProblems = analysisViewModel.recommendedProblems;
   $: guidedMentorSelection = mentorViewModel.personalizedMentorQueue[0] ?? null;
@@ -156,7 +153,7 @@
     mentorSelectionMode.set('manual');
     selectedPracticeProblemId.set(recommendation.id);
     activeMilestoneIndex.set(getFirstIncompleteMilestoneIndex($milestoneProgress, recommendation));
-    rightPaneTab.set('analysis');
+    rightPaneTab.set('mentor');
   }
 
   function activateGuidedMentorPlan() {
@@ -166,7 +163,7 @@
         getFirstIncompleteMilestoneIndex($milestoneProgress, guidedMentorSelection.recommendation)
       );
     }
-    rightPaneTab.set('analysis');
+    rightPaneTab.set('mentor');
   }
 
   function activateManualMentorPlan(recommendation: (typeof recommendedProblems)[number] | null) {
@@ -174,19 +171,46 @@
     mentorSelectionMode.set('manual');
     selectedPracticeProblemId.set(recommendation.id);
     activeMilestoneIndex.set(getFirstIncompleteMilestoneIndex($milestoneProgress, recommendation));
-    rightPaneTab.set('analysis');
+    rightPaneTab.set('mentor');
   }
 
-  function triggerTrace(force = false) {
-    dispatch('trace', { force });
+  function focusMilestone(milestoneIndex: number) {
+    activeMilestoneIndex.set(milestoneIndex);
   }
 
-  function triggerRunExact() {
-    dispatch('runexact');
+  function toggleMentorMilestone(
+    recommendation: (typeof recommendedProblems)[number],
+    milestoneIndex: number
+  ) {
+    const key = milestoneKey(recommendation.id, milestoneIndex);
+    const nextCompleted = !Boolean($milestoneProgress[key]);
+
+    milestoneProgress.update((current) => ({
+      ...current,
+      [key]: nextCompleted
+    }));
+
+    if (nextCompleted) {
+      const nextIncomplete = recommendation.milestones.findIndex(
+        (_milestone, nextIndex) =>
+          nextIndex > milestoneIndex &&
+          !Boolean($milestoneProgress[milestoneKey(recommendation.id, nextIndex)])
+      );
+      activeMilestoneIndex.set(nextIncomplete >= 0 ? nextIncomplete : milestoneIndex);
+      return;
+    }
+
+    activeMilestoneIndex.set(milestoneIndex);
   }
 
-  function dismissTraceReadiness() {
-    dispatch('dismisstracereadiness');
+  function isMilestoneComplete(problemId: string, milestoneIndex: number): boolean {
+    return isMentorMilestoneComplete($milestoneProgress, problemId, milestoneIndex);
+  }
+
+  function firstIncompleteMilestoneIndex(
+    recommendation: (typeof recommendedProblems)[number]
+  ): number {
+    return getFirstIncompleteMilestoneIndex($milestoneProgress, recommendation);
   }
 </script>
 
@@ -218,12 +242,7 @@
     {/if}
 
     {#if $rightPaneTab === 'visualizer'}
-      <VisualizerPanel
-        viewModel={visualizerViewModel}
-        onTrace={triggerTrace}
-        onRunExact={triggerRunExact}
-        onDismissTraceReadiness={dismissTraceReadiness}
-      />
+      <VisualizerPanel viewModel={visualizerViewModel} />
     {/if}
 
     {#if $rightPaneTab === 'analysis'}
@@ -234,5 +253,16 @@
       />
     {/if}
 
+    {#if $rightPaneTab === 'mentor'}
+      <MentorPanel
+        viewModel={mentorViewModel}
+        onActivateGuidedMentorPlan={activateGuidedMentorPlan}
+        onActivateManualMentorPlan={activateManualMentorPlan}
+        onFocusMilestone={focusMilestone}
+        onToggleMentorMilestone={toggleMentorMilestone}
+        isMilestoneComplete={isMilestoneComplete}
+        firstIncompleteMilestoneIndex={firstIncompleteMilestoneIndex}
+      />
+    {/if}
   </div>
 </div>

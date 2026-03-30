@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Simple C Interpreter for Visualization
  * 

@@ -1,4 +1,4 @@
-import { Eye, ListTree, Terminal } from 'lucide-svelte';
+import { Eye, ListTree, Target, Terminal } from 'lucide-svelte';
 
 // Shared right-pane palette aligned to the local shell theme
 export const ShellPalette = {
@@ -18,7 +18,7 @@ export const ShellPalette = {
   orange: '#bd9478',
 } as const;
 
-export type RightPaneTabId = 'console' | 'visualizer' | 'analysis';
+export type RightPaneTabId = 'console' | 'visualizer' | 'analysis' | 'mentor';
 
 export const RIGHT_PANE_TABS: Array<{
   id: RightPaneTabId;
@@ -28,7 +28,8 @@ export const RIGHT_PANE_TABS: Array<{
 }> = [
   { id: 'console', label: 'Console', Icon: Terminal, color: ShellPalette.highlight },
   { id: 'visualizer', label: 'Visualizer', Icon: Eye, color: ShellPalette.highlight },
-  { id: 'analysis', label: 'Analysis', Icon: ListTree, color: ShellPalette.highlight }
+  { id: 'analysis', label: 'Analysis', Icon: ListTree, color: ShellPalette.highlight },
+  { id: 'mentor', label: 'Mentor', Icon: Target, color: ShellPalette.orange }
 ];
 
 export const VISUALIZER_FEATURES = [
