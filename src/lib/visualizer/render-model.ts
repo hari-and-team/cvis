@@ -32,6 +32,11 @@ export interface VisualizerFlowDescriptor {
   text: string;
 }
 
+export interface VisualizerLinearItemView {
+  displayValue: string;
+  state: 'active' | 'top' | 'popped';
+}
+
 export interface VisualizerRenderModel {
   intentLabel: string;
   intentConfidence: number;
@@ -44,7 +49,8 @@ export interface VisualizerRenderModel {
   structBlocks: VisualizerStructBlock[];
   pointerRefs: VisualizerPointerRef[];
   trees: VisualizerTree[];
-  stackItems: string[];
+  stackItems: VisualizerLinearItemView[];
+  poppedStackItems: string[];
   queueItems: string[];
   graphs: VisualizerGraph[];
   memoryEntries: VisualizerMemoryEntry[];
@@ -148,10 +154,48 @@ function formatTechniqueLabel(tag: string): string {
     .join(' ');
 }
 
+function buildStackItems(currentValues: unknown[]): VisualizerLinearItemView[] {
+  const formattedCurrent = currentValues.map((item) => formatValue(item));
+  const topIndex = formattedCurrent.length - 1;
+
+  return formattedCurrent.map((displayValue, index) => ({
+    displayValue,
+    state: index === topIndex ? 'top' : 'active'
+  }));
+}
+
+function buildPoppedStackHistory(traceHistory: TraceStep[]): string[] {
+  const poppedHistory: string[] = [];
+
+  for (let index = 1; index < traceHistory.length; index += 1) {
+    const previousValues = normalizeTraceStep(traceHistory[index - 1]).stack.values.map((item) =>
+      formatValue(item)
+    );
+    const currentValues = normalizeTraceStep(traceHistory[index]).stack.values.map((item) =>
+      formatValue(item)
+    );
+    const isPrefixPop =
+      previousValues.length > currentValues.length &&
+      currentValues.every((item, currentIndex) => item === previousValues[currentIndex]);
+
+    if (!isPrefixPop) {
+      continue;
+    }
+
+    const poppedOnThisStep = previousValues.slice(currentValues.length).reverse();
+    for (const poppedValue of poppedOnThisStep) {
+      poppedHistory.unshift(poppedValue);
+    }
+  }
+
+  return poppedHistory;
+}
+
 export function buildVisualizerRenderModel(
   traceStep: TraceStep | null,
   previousTraceStep: TraceStep | null,
-  editorCode: string
+  editorCode: string,
+  traceHistory: TraceStep[] = []
 ): VisualizerRenderModel {
   const normalizedTrace = normalizeTraceStep(traceStep);
   const previousNormalizedTrace = normalizeTraceStep(previousTraceStep);
@@ -194,7 +238,8 @@ export function buildVisualizerRenderModel(
     }))
   }));
 
-  const stackItems = normalizedTrace.stack.values.map((item) => formatValue(item));
+  const stackItems = buildStackItems(normalizedTrace.stack.values);
+  const poppedStackItems = buildPoppedStackHistory(traceHistory);
   const queueItems = normalizedTrace.queue.values.map((item) => formatValue(item));
 
   const hasStructureViews =
@@ -203,6 +248,7 @@ export function buildVisualizerRenderModel(
     structBlocks.length > 0 ||
     normalizedTrace.trees.length > 0 ||
     stackItems.length > 0 ||
+    poppedStackItems.length > 0 ||
     queueItems.length > 0 ||
     normalizedTrace.graphs.length > 0;
   const hasRenderableSections =
@@ -213,6 +259,7 @@ export function buildVisualizerRenderModel(
     structBlocks.length > 0 ||
     normalizedTrace.trees.length > 0 ||
     stackItems.length > 0 ||
+    poppedStackItems.length > 0 ||
     queueItems.length > 0 ||
     normalizedTrace.graphs.length > 0;
 
@@ -229,6 +276,7 @@ export function buildVisualizerRenderModel(
     pointerRefs: normalizedTrace.pointerRefs,
     trees: normalizedTrace.trees,
     stackItems,
+    poppedStackItems,
     queueItems,
     graphs: normalizedTrace.graphs,
     memoryEntries: normalizedTrace.memoryEntries,

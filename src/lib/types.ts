@@ -26,6 +26,8 @@ export interface ExecutionResult {
   exitCode: number;
   executionTime: number;
   peakMemoryBytes?: number | null;
+  inputClosed?: boolean;
+  completionReason?: string | null;
 }
 
 export interface RunSessionStartRequest {

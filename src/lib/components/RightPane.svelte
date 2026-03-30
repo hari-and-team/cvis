@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import type { TraceStep } from '$lib/types';
   import {
     activeMilestoneIndex,
@@ -49,10 +49,6 @@
   export let traceErr: string | null = null;
   export let traceNotice: string | null = null;
 
-  const dispatch = createEventDispatcher<{
-    trace: void;
-  }>();
-
   let prevMentorProblemId: string | null = null;
   const intentExplainer = createIntentExplainerController();
   let intentExplainerState: IntentExplainerViewModel = {
@@ -95,6 +91,7 @@
   $: visualizerViewModel = buildVisualizerViewModel({
     editorCode: $editorCode,
     runConsoleTranscript: $runConsoleTranscript,
+    runSessionId: $runSessionId,
     lastExecutionResult: $lastExecutionResult,
     lastCompileResult: $lastCompileResult,
     lastRunInputTranscript: $lastRunInputTranscript,
@@ -210,10 +207,6 @@
   ): number {
     return getFirstIncompleteMilestoneIndex($milestoneProgress, recommendation);
   }
-
-  function triggerTrace() {
-    dispatch('trace');
-  }
 </script>
 
 <div class="right-pane">
@@ -244,7 +237,7 @@
     {/if}
 
     {#if $rightPaneTab === 'visualizer'}
-      <VisualizerPanel viewModel={visualizerViewModel} onTrace={triggerTrace} />
+      <VisualizerPanel viewModel={visualizerViewModel} />
     {/if}
 
     {#if $rightPaneTab === 'analysis'}

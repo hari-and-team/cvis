@@ -8,15 +8,15 @@ API_BASE="http://localhost:3001"
 TEMP_DIR="/tmp/cvis-test-$$"
 mkdir -p "$TEMP_DIR"
 
-echo "═══════════════════════════════════════════════"
+echo "==============================================="
 echo "  Backend API Test Suite"
-echo "═══════════════════════════════════════════════"
+echo "==============================================="
 echo ""
 
 # Test 1: Health check
 echo "Test 1: Health check"
 HEALTH=$(curl -s "$API_BASE/health")
-echo "✓ Health: $HEALTH"
+echo "OK Health: $HEALTH"
 echo ""
 
 # Test 2: Compile valid C code
@@ -32,9 +32,9 @@ COMPILE_RESULT=$(curl -s -X POST "$API_BASE/api/compile" \
 echo "$COMPILE_RESULT" | python3 -m json.tool
 SUCCESS=$(echo "$COMPILE_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('success', False))")
 if [ "$SUCCESS" = "True" ]; then
-  echo "✓ Compilation successful"
+  echo "OK Compilation successful"
 else
-  echo "✗ Compilation failed"
+  echo "FAIL Compilation failed"
   exit 1
 fi
 echo ""
@@ -53,9 +53,9 @@ RUN_RESULT=$(curl -s -X POST "$API_BASE/api/run" \
 echo "$RUN_RESULT" | python3 -m json.tool
 EXIT_CODE=$(echo "$RUN_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('exitCode', 1))")
 if [ "$EXIT_CODE" = "0" ]; then
-  echo "✓ Execution successful"
+  echo "OK Execution successful"
 else
-  echo "✗ Execution failed"
+  echo "FAIL Execution failed"
   exit 1
 fi
 echo ""
@@ -73,9 +73,9 @@ INVALID_RESULT=$(curl -s -X POST "$API_BASE/api/compile" \
 echo "$INVALID_RESULT" | python3 -m json.tool
 SUCCESS=$(echo "$INVALID_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('success', True))")
 if [ "$SUCCESS" = "False" ]; then
-  echo "✓ Compilation correctly failed"
+  echo "OK Compilation correctly failed"
 else
-  echo "✗ Should have failed compilation"
+  echo "FAIL Should have failed compilation"
   exit 1
 fi
 echo ""
@@ -94,21 +94,21 @@ TRACE_RESULT=$(curl -s -X POST "$API_BASE/api/trace" \
 echo "$TRACE_RESULT" | python3 -m json.tool
 SUCCESS=$(echo "$TRACE_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('success', False))")
 if [ "$SUCCESS" = "True" ]; then
-  echo "✓ Trace endpoint working"
+  echo "OK Trace endpoint working"
 else
-  echo "✗ Trace failed"
+  echo "FAIL Trace failed"
   exit 1
 fi
 HAS_RUNTIME=$(echo "$TRACE_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); step=(body.get('steps') or [{}])[0]; runtime=step.get('runtime') or {}; ok=isinstance(runtime.get('globals'), dict) and isinstance(runtime.get('frames'), list) and isinstance(runtime.get('flatMemory'), dict); print(ok)")
 if [ "$HAS_RUNTIME" = "True" ]; then
-  echo "✓ Structured trace runtime snapshot present"
+  echo "OK Structured trace runtime snapshot present"
 else
-  echo "✗ Structured trace runtime snapshot missing"
+  echo "FAIL Structured trace runtime snapshot missing"
   exit 1
 fi
 echo ""
 
-# Test 6: AI intent analysis
+# Test 6: Trace stdin happy path
 echo "Test 6: Trace stdin happy path"
 cat > "$TEMP_DIR/trace-stdin.json" << 'EOF'
 {
@@ -124,9 +124,9 @@ echo "$TRACE_STDIN_RESULT" | python3 -m json.tool
 TRACE_STDIN_SUCCESS=$(echo "$TRACE_STDIN_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(body.get('success', False))")
 TRACE_STDIN_VALUE=$(echo "$TRACE_STDIN_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); steps=body.get('steps') or []; frames=((steps[0] if steps else {}).get('runtime') or {}).get('frames') or []; locals_=(frames[0] if frames else {}).get('locals') or {}; print(locals_.get('x', ''))")
 if [ "$TRACE_STDIN_SUCCESS" = "True" ] && [ "$TRACE_STDIN_VALUE" = "42" ]; then
-  echo "✓ Trace stdin is applied to runtime state"
+  echo "OK Trace stdin is applied to runtime state"
 else
-  echo "✗ Trace stdin did not reach runtime state"
+  echo "FAIL Trace stdin did not reach runtime state"
   exit 1
 fi
 echo ""
@@ -138,29 +138,29 @@ TRACE_BAD_INPUT_RESULT=$(curl -s -X POST "$API_BASE/api/trace" \
 echo "$TRACE_BAD_INPUT_RESULT" | python3 -m json.tool
 TRACE_BAD_INPUT_ERROR=$(echo "$TRACE_BAD_INPUT_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); errs=body.get('errors') or []; print(errs[0] if errs else '')")
 if [ "$TRACE_BAD_INPUT_ERROR" = "\"input\" must be a string when provided" ]; then
-  echo "✓ Invalid trace input is rejected cleanly"
+  echo "OK Invalid trace input is rejected cleanly"
 else
-  echo "✗ Invalid trace input was not handled cleanly"
+  echo "FAIL Invalid trace input was not handled cleanly"
   exit 1
 fi
 echo ""
 
-echo "Test 8: Trace rejects unsupported syntax cleanly"
-cat > "$TEMP_DIR/trace-unsupported.json" << 'EOF'
+echo "Test 8: Trace supports switch/case execution"
+cat > "$TEMP_DIR/trace-switch.json" << 'EOF'
 {
-  "code": "#include <stdio.h>\nint main() {\n  int x = 2;\n  switch (x) {\n    case 2: return 0;\n    default: return 1;\n  }\n}\n"
+  "code": "#include <stdio.h>\nint main() {\n  int x = 2;\n  int y = 0;\n  switch (x) {\n    case 1:\n      y = 10;\n      break;\n    case 2:\n      y = 20;\n      break;\n    default:\n      y = 30;\n  }\n  return y;\n}\n"
 }
 EOF
-TRACE_UNSUPPORTED_RESULT=$(curl -s -X POST "$API_BASE/api/trace" \
+TRACE_SWITCH_RESULT=$(curl -s -X POST "$API_BASE/api/trace" \
   -H "Content-Type: application/json" \
-  -d @"$TEMP_DIR/trace-unsupported.json")
-echo "$TRACE_UNSUPPORTED_RESULT" | python3 -m json.tool
-TRACE_UNSUPPORTED_SUCCESS=$(echo "$TRACE_UNSUPPORTED_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(body.get('success', True))")
-TRACE_UNSUPPORTED_CLEAR=$(echo "$TRACE_UNSUPPORTED_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); errs=body.get('errors') or []; print(bool(errs) and 'does not support switch/case' in errs[0])")
-if [ "$TRACE_UNSUPPORTED_SUCCESS" = "False" ] && [ "$TRACE_UNSUPPORTED_CLEAR" = "True" ]; then
-  echo "✓ Unsupported trace syntax returns a controlled error"
+  -d @"$TEMP_DIR/trace-switch.json")
+echo "$TRACE_SWITCH_RESULT" | python3 -m json.tool
+TRACE_SWITCH_SUCCESS=$(echo "$TRACE_SWITCH_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(body.get('success', False))")
+TRACE_SWITCH_VALUE=$(echo "$TRACE_SWITCH_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); steps=body.get('steps') or []; frames=((steps[-1] if steps else {}).get('runtime') or {}).get('frames') or []; locals_=(frames[0] if frames else {}).get('locals') or {}; print(locals_.get('y', ''))")
+if [ "$TRACE_SWITCH_SUCCESS" = "True" ] && [ "$TRACE_SWITCH_VALUE" = "20" ]; then
+  echo "OK Switch/case trace follows the matching branch"
 else
-  echo "✗ Unsupported trace syntax was not handled cleanly"
+  echo "FAIL Switch/case trace did not produce the expected branch state"
   exit 1
 fi
 echo ""
@@ -178,9 +178,9 @@ echo "$TRACE_RUNAWAY_RESULT" | python3 -c "import sys, json; body=json.load(sys.
 TRACE_RUNAWAY_SUCCESS=$(echo "$TRACE_RUNAWAY_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(body.get('success', True))")
 TRACE_RUNAWAY_CLEAR=$(echo "$TRACE_RUNAWAY_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); errs=body.get('errors') or []; print(bool(errs) and 'maximum step limit' in errs[0])")
 if [ "$TRACE_RUNAWAY_SUCCESS" = "False" ] && [ "$TRACE_RUNAWAY_CLEAR" = "True" ]; then
-  echo "✓ Runaway loops return a controlled step-limit error"
+  echo "OK Runaway loops return a controlled step-limit error"
 else
-  echo "✗ Runaway loop trace was not handled cleanly"
+  echo "FAIL Runaway loop trace was not handled cleanly"
   exit 1
 fi
 echo ""
@@ -198,9 +198,9 @@ echo "$ANALYZE_RESULT" | python3 -m json.tool
 ANALYZE_SUCCESS=$(echo "$ANALYZE_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(body.get('success', False))")
 ANALYZE_HAS_SUMMARY=$(echo "$ANALYZE_RESULT" | python3 -c "import sys, json; body=json.load(sys.stdin); print(isinstance(body.get('summary'), str) and isinstance(body.get('explanation'), list) and isinstance(body.get('candidates'), list))")
 if [ "$ANALYZE_SUCCESS" = "True" ] && [ "$ANALYZE_HAS_SUMMARY" = "True" ]; then
-  echo "✓ AI intent analysis returned structured output"
+  echo "OK AI intent analysis returned structured output"
 else
-  echo "✗ AI intent analysis output was incomplete"
+  echo "FAIL AI intent analysis output was incomplete"
   exit 1
 fi
 echo ""
@@ -220,9 +220,9 @@ UNSAFE_RESULT=$(curl -s -X POST "$API_BASE/api/run" \
 echo "$UNSAFE_RESULT" | python3 -m json.tool
 UNSAFE_EXIT=$(echo "$UNSAFE_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('exitCode', 0))")
 if [ "$UNSAFE_EXIT" = "126" ]; then
-  echo "✓ Unsafe binary path correctly rejected"
+  echo "OK Unsafe binary path correctly rejected"
 else
-  echo "✗ Unsafe binary path was not rejected"
+  echo "FAIL Unsafe binary path was not rejected"
   exit 1
 fi
 echo ""
@@ -230,6 +230,6 @@ echo ""
 # Cleanup
 rm -rf "$TEMP_DIR"
 
-echo "═══════════════════════════════════════════════"
-echo "  All tests passed! ✓"
-echo "═══════════════════════════════════════════════"
+echo "==============================================="
+echo "  All tests passed!"
+echo "==============================================="

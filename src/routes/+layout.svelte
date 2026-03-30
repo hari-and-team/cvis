@@ -6,6 +6,8 @@
   import HeaderBar from '$lib/components/HeaderBar.svelte';
   import OnboardingModal from '$lib/components/OnboardingModal.svelte';
   import RightPane from '$lib/components/RightPane.svelte';
+  import TraceControlDock from '$lib/components/TraceControlDock.svelte';
+  import { buildVisualizerViewModel } from '$lib/app-shell/right-pane/view-models';
   import { runBinaryAction, runCompileAction, runTraceAction } from '$lib/runtime/actions';
   import {
     lastBinaryPath,
@@ -19,7 +21,12 @@
     selectedPracticeProblemId,
     activeMilestoneIndex,
     milestoneProgress,
+    pendingRunInputEcho,
     profileEditorOpen,
+    lastCompileResult,
+    lastExecutionResult,
+    runConsoleTranscript,
+    runSessionId,
     userProfile
   } from '$lib/stores';
   import type { UserProfile } from '$lib/types';
@@ -325,6 +332,21 @@
     traceNotice = null;
   }
 
+  $: floatingVisualizerViewModel = buildVisualizerViewModel({
+    editorCode: $editorCode,
+    runConsoleTranscript: $runConsoleTranscript,
+    runSessionId: $runSessionId,
+    lastExecutionResult: $lastExecutionResult,
+    lastCompileResult: $lastCompileResult,
+    lastRunInputTranscript: $lastRunInputTranscript,
+    pendingRunInputEcho: $pendingRunInputEcho,
+    traceSteps: $traceSteps,
+    currentTraceStepData: $traceSteps[$currentStepIndex] ?? null,
+    isTracing,
+    traceErr,
+    traceNotice
+  });
+
   function resetTraceUiState() {
     traceSteps.set([]);
     currentStepIndex.set(0);
@@ -364,8 +386,24 @@
     const requiresRuntimeReplay = /\bscanf\s*\(/.test($editorCode);
     const traceInput = $lastRunInputTranscript;
 
+    if ($runSessionId) {
+      traceNotice =
+        'Finish the active Console run before tracing. Send EOF if the program is waiting for more input, or stop the run and start again.';
+      traceSteps.set([]);
+      currentStepIndex.set(0);
+      return;
+    }
+
     if (requiresRuntimeReplay && traceInput.length === 0) {
       traceNotice = 'This program uses scanf(). Run it once in the Console, enter stdin there, then retrace to reuse that exact input.';
+      traceSteps.set([]);
+      currentStepIndex.set(0);
+      return;
+    }
+
+    if (requiresRuntimeReplay && $lastExecutionResult?.completionReason === 'stopped') {
+      traceNotice =
+        'The latest Console run was stopped before the program finished, so its stdin replay may be incomplete. Run it again to completion, or send EOF, then trace again.';
       traceSteps.set([]);
       currentStepIndex.set(0);
       return;
@@ -428,9 +466,13 @@
     </div>
   {/if}
   <div class="main">
-    <EditorPane />
+    <div class="workspace-column">
+      <EditorPane />
+      <div class="execution-dock">
+        <TraceControlDock viewModel={floatingVisualizerViewModel} onTrace={handleTrace} />
+      </div>
+    </div>
     <RightPane
-      on:trace={handleTrace}
       traceSteps={$traceSteps}
       currentStep={$currentStepIndex}
       {isTracing}
@@ -461,6 +503,26 @@
     display: flex;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
+  }
+
+  .workspace-column {
+    width: 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: #282c34;
+    border-right: 1px solid #3e4451;
+    min-height: 0;
+  }
+
+  .execution-dock {
+    flex-shrink: 0;
+    width: 100%;
+    padding: 8px 12px 12px;
+    background:
+      linear-gradient(180deg, rgba(40, 44, 52, 0.96) 0%, rgba(33, 37, 43, 0.98) 100%);
+    border-top: 1px solid rgba(92, 99, 112, 0.45);
   }
 
   .draft-conflict-banner {
@@ -525,6 +587,22 @@
   }
 
   @media (max-width: 900px) {
+    .main {
+      flex-direction: column;
+    }
+
+    .workspace-column {
+      width: 100%;
+      min-height: 0;
+      border-right: none;
+      border-bottom: 1px solid #3e4451;
+    }
+
+    .execution-dock {
+      width: 100%;
+      padding: 12px;
+    }
+
     .draft-conflict-banner {
       flex-direction: column;
       align-items: stretch;

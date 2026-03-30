@@ -308,7 +308,9 @@ export async function runBinaryAction(binaryPath: string | null): Promise<void> 
       stderr: '',
       exitCode: 0,
       executionTime: 0,
-      peakMemoryBytes: null
+      peakMemoryBytes: null,
+      inputClosed: false,
+      completionReason: null
     });
 
     while (activeRunSessionId === startedSessionId) {
@@ -356,7 +358,9 @@ export async function runBinaryAction(binaryPath: string | null): Promise<void> 
         stderr: poll.stderr,
         exitCode: poll.done ? (poll.exitCode ?? 1) : 0,
         executionTime: poll.executionTime,
-        peakMemoryBytes: poll.peakMemoryBytes ?? null
+        peakMemoryBytes: poll.peakMemoryBytes ?? null,
+        inputClosed: Boolean(poll.inputClosed),
+        completionReason: poll.completionReason ?? null
       });
 
       if (poll.done) {
@@ -446,14 +450,17 @@ export async function interruptRuntimeSession(): Promise<void> {
     current
       ? {
           ...current,
-          exitCode: 130
+          exitCode: 130,
+          completionReason: 'stopped'
         }
       : {
           stdout: '',
           stderr: '',
           exitCode: 130,
           executionTime: 0,
-          peakMemoryBytes: null
+          peakMemoryBytes: null,
+          inputClosed: false,
+          completionReason: 'stopped'
         }
   );
   runConsoleTranscript.update((prev) => `${prev}^C\n`);

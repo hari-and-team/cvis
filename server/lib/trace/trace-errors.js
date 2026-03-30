@@ -38,8 +38,17 @@ function extractLineNumber(message) {
 export function normalizeTraceError(error, options = {}) {
   const rawMessage = error instanceof Error ? error.message : String(error ?? 'Trace failed');
   const line = extractLineNumber(rawMessage);
+  const exhaustedInputLine =
+    Number.isInteger(options.inputReplayExhaustedLine) ? options.inputReplayExhaustedLine : null;
 
   if (/Maximum steps exceeded/.test(rawMessage)) {
+    if (exhaustedInputLine !== null) {
+      return createTraceFailure(
+        'Trace replay ran out of captured stdin before the program exited, so a later scanf() left execution spinning. Run the program again and finish the full input sequence, or check scanf() return values before looping.',
+        { ...options, line: exhaustedInputLine, phase: 'runtime' }
+      );
+    }
+
     return createTraceFailure(
       'Trace stopped after hitting the maximum step limit. This usually means an infinite loop or very large loop body. Use breakpoints or compile/run for the full execution.',
       { ...options, line, phase: 'runtime' }

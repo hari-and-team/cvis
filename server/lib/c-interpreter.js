@@ -25,6 +25,7 @@ import { detectUnsupportedTraceFeature } from './trace/unsupported-syntax.js';
 const KEYWORDS = new Set([
   'int', 'float', 'double', 'char', 'void', 'return',
   'if', 'else', 'while', 'for', 'do', 'break', 'continue',
+  'switch', 'case', 'default',
   'struct', 'sizeof', 'typedef', 'NULL', 'true', 'false'
 ]);
 
@@ -438,6 +439,7 @@ class Parser {
     if (t.value === 'if') return this.parseIf();
     if (t.value === 'while') return this.parseWhile();
     if (t.value === 'for') return this.parseFor();
+    if (t.value === 'switch') return this.parseSwitch();
     if (t.value === 'return') return this.parseReturn();
     if (t.value === 'break') { this.advance(); this.match('OP', ';'); return { type: 'Break', line }; }
     if (t.value === 'continue') { this.advance(); this.match('OP', ';'); return { type: 'Continue', line }; }
@@ -507,6 +509,61 @@ class Parser {
 
     const body = this.parseStatement();
     return { type: 'For', init, condition, update, body, line };
+  }
+
+  parseSwitch() {
+    const line = this.peek().line;
+    this.expect('KW', 'switch');
+    this.expect('OP', '(');
+    const discriminant = this.parseExpression();
+    this.expect('OP', ')');
+    const body = this.parseSwitchBody();
+    return { type: 'Switch', discriminant, clauses: body.clauses, line };
+  }
+
+  parseSwitchBody() {
+    this.expect('OP', '{');
+    const clauses = [];
+    let currentClause = null;
+
+    while (this.peek().value !== '}' && this.peek().type !== 'EOF') {
+      const token = this.peek();
+
+      if (token.value === 'case') {
+        if (currentClause) {
+          clauses.push(currentClause);
+        }
+
+        const line = this.advance().line;
+        const test = this.parseExpression();
+        this.expect('OP', ':');
+        currentClause = { type: 'SwitchClause', test, statements: [], line };
+        continue;
+      }
+
+      if (token.value === 'default') {
+        if (currentClause) {
+          clauses.push(currentClause);
+        }
+
+        const line = this.advance().line;
+        this.expect('OP', ':');
+        currentClause = { type: 'SwitchClause', test: null, statements: [], line };
+        continue;
+      }
+
+      const statement = this.parseStatement();
+      if (currentClause) {
+        currentClause.statements.push(statement);
+      }
+    }
+
+    if (currentClause) {
+      clauses.push(currentClause);
+    }
+
+    this.expect('OP', '}');
+    return { clauses };
   }
 
   parseReturn() {
@@ -782,6 +839,7 @@ class Interpreter {
 
     this.stdin = typeof input === 'string' ? input : '';
     this.stdinCursor = 0;
+    this.inputReplayExhaustedLine = null;
   }
 
   skipInputWhitespace() {
@@ -926,7 +984,8 @@ class Interpreter {
       return normalizeTraceError(err, {
         steps: this.steps,
         output: this.output,
-        phase: 'runtime'
+        phase: 'runtime',
+        inputReplayExhaustedLine: this.inputReplayExhaustedLine
       });
     }
   }
@@ -1140,6 +1199,61 @@ class Interpreter {
           if (this.returnValue !== null) break;
           if (node.update) {
             this.evaluate(node.update);
+          }
+        }
+        return;
+      }
+
+      case 'Switch': {
+        this.recordStep(node.line, `switch expression`);
+        const discriminant = this.evaluate(node.discriminant);
+        let startIndex = -1;
+        let defaultIndex = -1;
+
+        for (let i = 0; i < node.clauses.length; i += 1) {
+          const clause = node.clauses[i];
+          if (clause.test === null) {
+            if (defaultIndex === -1) {
+              defaultIndex = i;
+            }
+            continue;
+          }
+
+          if (this.evaluate(clause.test) === discriminant) {
+            startIndex = i;
+            break;
+          }
+        }
+
+        if (startIndex === -1) {
+          startIndex = defaultIndex;
+        }
+
+        if (startIndex === -1) {
+          return;
+        }
+
+        for (let i = startIndex; i < node.clauses.length; i += 1) {
+          const clause = node.clauses[i];
+          this.recordStep(
+            clause.line ?? node.line,
+            clause.test === null ? 'default case' : 'case match'
+          );
+
+          for (const statement of clause.statements) {
+            this.execute(statement);
+            if (this.breakFlag || this.continueFlag || this.returnValue !== null) {
+              break;
+            }
+          }
+
+          if (this.breakFlag) {
+            this.breakFlag = false;
+            break;
+          }
+
+          if (this.continueFlag || this.returnValue !== null) {
+            return;
           }
         }
         return;
@@ -1390,6 +1504,9 @@ class Interpreter {
             if (argIndex >= node.args.length) break;
             const readValue = this.readScanfValue(spec);
             if (readValue === null) {
+              if (this.inputReplayExhaustedLine === null) {
+                this.inputReplayExhaustedLine = node.line ?? null;
+              }
               break;
             }
 

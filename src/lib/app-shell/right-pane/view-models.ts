@@ -17,7 +17,10 @@ export interface ConsoleViewModel {
 export interface VisualizerViewModel {
   status: 'empty' | 'loading' | 'error' | 'ready';
   traceUsesRuntimeInput: boolean;
+  canStartTrace: boolean;
   hasCapturedRunInput: boolean;
+  isConsoleRunActive: boolean;
+  inputReplayNeedsFreshRun: boolean;
   traceConsoleOutput: string;
   traceNotice: string | null;
   capturedRunInputLineCount: number;
@@ -244,6 +247,7 @@ export function buildConsoleViewModel({
 export function buildVisualizerViewModel({
   editorCode,
   runConsoleTranscript,
+  runSessionId,
   lastExecutionResult,
   lastCompileResult,
   lastRunInputTranscript,
@@ -256,6 +260,7 @@ export function buildVisualizerViewModel({
 }: {
   editorCode: string;
   runConsoleTranscript: string;
+  runSessionId: string | null;
   lastExecutionResult: ExecutionResult | null;
   lastCompileResult: CompileResult | null;
   lastRunInputTranscript: string;
@@ -277,6 +282,15 @@ export function buildVisualizerViewModel({
   const renderedOutput = `${output}${pendingRunInputEcho}`;
   const traceUsesRuntimeInput = /\bscanf\s*\(/.test(editorCode);
   const hasCapturedRunInput = lastRunInputTranscript.length > 0;
+  const isConsoleRunActive = typeof runSessionId === 'string' && runSessionId.length > 0;
+  const inputReplayNeedsFreshRun =
+    traceUsesRuntimeInput &&
+    hasCapturedRunInput &&
+    lastExecutionResult?.completionReason === 'stopped';
+  const canReplayCapturedInput =
+    hasCapturedRunInput && !isConsoleRunActive && !inputReplayNeedsFreshRun;
+  const canStartTrace =
+    !isConsoleRunActive && (!traceUsesRuntimeInput || canReplayCapturedInput);
   const capturedRunInputLineCount =
     lastRunInputTranscript.length === 0
       ? 0
@@ -293,17 +307,26 @@ export function buildVisualizerViewModel({
           ? 'ready'
           : 'empty',
     traceUsesRuntimeInput,
+    canStartTrace,
     hasCapturedRunInput,
+    isConsoleRunActive,
+    inputReplayNeedsFreshRun,
     traceConsoleOutput: renderedOutput || output,
     traceNotice,
     capturedRunInputLineCount,
     traceConsoleStatus: traceUsesRuntimeInput
-      ? hasCapturedRunInput
-        ? 'stdin replay ready'
-        : 'run first'
-      : renderedOutput
-        ? 'latest console output'
-        : 'optional',
+      ? isConsoleRunActive
+        ? 'finish current run'
+        : inputReplayNeedsFreshRun
+          ? 'rerun before trace'
+          : canReplayCapturedInput
+            ? 'stdin replay ready'
+            : 'run first'
+      : isConsoleRunActive
+        ? 'finish current run'
+        : renderedOutput
+          ? 'latest console output'
+          : 'optional',
     isTracing,
     traceErr,
     traceSteps,

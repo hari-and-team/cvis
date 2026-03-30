@@ -169,21 +169,20 @@ async function main() {
   log('✓ Invalid trace input is rejected cleanly');
   log('');
 
-  log('Test 10: Trace rejects unsupported syntax cleanly');
-  const unsupportedTrace = await getJson(`${API_BASE}/api/trace`, {
+  log('Test 10: Trace supports switch/case execution');
+  const switchTrace = await getJson(`${API_BASE}/api/trace`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      code: '#include <stdio.h>\nint main() {\n  int x = 2;\n  switch (x) {\n    case 2: return 0;\n    default: return 1;\n  }\n}\n'
+      code:
+        '#include <stdio.h>\nint main() {\n  int x = 2;\n  int y = 0;\n  switch (x) {\n    case 1:\n      y = 10;\n      break;\n    case 2:\n      y = 20;\n      break;\n    default:\n      y = 30;\n  }\n  return y;\n}\n'
     })
   });
-  log(JSON.stringify(unsupportedTrace.body, null, 2));
-  assert(unsupportedTrace.body?.success === false, 'Unsupported trace syntax should fail cleanly');
-  assert(
-    Array.isArray(unsupportedTrace.body?.errors) && unsupportedTrace.body.errors[0]?.includes('does not support switch/case'),
-    'Unsupported trace syntax should return a clear error'
-  );
-  log('✓ Unsupported trace syntax returns a controlled error');
+  log(JSON.stringify(switchTrace.body, null, 2));
+  assert(switchTrace.body?.success === true, 'Switch/case trace should succeed');
+  const switchLocals = switchTrace.body?.steps?.at(-1)?.runtime?.frames?.[0]?.locals ?? {};
+  assert(switchLocals.y === 20, 'Switch/case trace should follow the matching branch');
+  log('✓ Switch/case trace returns the matching branch state');
   log('');
 
   log('Test 11: Trace stops runaway loops cleanly');

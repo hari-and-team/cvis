@@ -2,19 +2,6 @@ import { createTraceFailure } from './trace-errors.js';
 
 const UNSUPPORTED_TRACE_FEATURES = [
   {
-    regex: /\bswitch\s*\(/,
-    message:
-      'Trace does not support switch/case statements yet. Use if/else for trace playback or use compile/run for exact execution.'
-  },
-  {
-    regex: /\bcase\s+[^:]+:/,
-    message: 'Trace does not support switch/case statements yet. Use compile/run for exact execution.'
-  },
-  {
-    regex: /\bdefault\s*:/,
-    message: 'Trace does not support switch/case statements yet. Use compile/run for exact execution.'
-  },
-  {
     regex: /\bdo\s*\{/,
     message:
       'Trace does not support do/while loops yet. Use a while loop for tracing or use compile/run for exact execution.'

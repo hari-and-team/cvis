@@ -18,7 +18,14 @@
   export let traceStep: TraceStep | null = null;
   $: previousTraceStep =
     $currentStepIndex > 0 ? $traceSteps[$currentStepIndex - 1] ?? null : null;
-  $: renderModel = buildVisualizerRenderModel(traceStep, previousTraceStep, $editorCode);
+  $: traceHistory =
+    traceStep && $currentStepIndex >= 0 ? $traceSteps.slice(0, $currentStepIndex + 1) : [];
+  $: renderModel = buildVisualizerRenderModel(
+    traceStep,
+    previousTraceStep,
+    $editorCode,
+    traceHistory
+  );
 
   let playInterval: number | null = null;
   let scrollRef: HTMLDivElement | null = null;
@@ -193,8 +200,12 @@
         <PointerMapView pointerRefs={renderModel.pointerRefs} />
       {/if}
 
-      {#if renderModel.stackItems.length > 0}
-        <LinearStructureView label="Stack" values={renderModel.stackItems} />
+      {#if renderModel.stackItems.length > 0 || renderModel.poppedStackItems.length > 0}
+        <LinearStructureView
+          label="Stack"
+          stackItems={renderModel.stackItems}
+          poppedItems={renderModel.poppedStackItems}
+        />
       {/if}
 
       {#if renderModel.queueItems.length > 0}
