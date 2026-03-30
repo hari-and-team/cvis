@@ -40,12 +40,8 @@ export async function hydrateRuntimeCapabilities(): Promise<void> {
   }
 
   hydrationPromise = (async () => {
-    const configuredApiBase = getConfiguredApiBase();
-    const shouldProbeExternalBackend = configuredApiBase.length > 0;
-
     try {
-      const healthUrl = shouldProbeExternalBackend ? `${configuredApiBase}/health` : '/health';
-      const response = await fetch(healthUrl, {
+      const response = await fetch('/health', {
         headers: {
           Accept: 'application/json'
         }
@@ -75,9 +71,7 @@ export async function hydrateRuntimeCapabilities(): Promise<void> {
         executionMode.set(healthMode);
       }
     } catch {
-      if (shouldProbeExternalBackend) {
-        executionMode.set('trace-only');
-      }
+      executionMode.set('trace-only');
     }
   })();
 

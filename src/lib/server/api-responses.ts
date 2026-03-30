@@ -4,6 +4,8 @@ import { normalizeApiBase, normalizeExecutionMode, resolveExecutionMode } from '
 
 export const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE =
   'Compile and live run are disabled in this deployment. Use Trace Execution and Analysis, or connect an external backend for GCC-based execution.';
+export const EXTERNAL_BACKEND_UNAVAILABLE_MESSAGE =
+  'The configured external execution backend is currently unavailable. Check that the Railway service is healthy and that PUBLIC_API_BASE points to it.';
 
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store, max-age=0'
@@ -68,6 +70,45 @@ export function unsupportedRunSessionResponse(status = 501) {
       error: NATIVE_EXECUTION_UNAVAILABLE_MESSAGE
     },
     { status }
+  );
+}
+
+export function backendUnavailableCompileResponse(detail = EXTERNAL_BACKEND_UNAVAILABLE_MESSAGE) {
+  return apiJson(
+    {
+      success: false,
+      error: 'Execution backend unavailable',
+      errors: [detail],
+      warnings: [],
+      compilationTime: 0
+    },
+    { status: 503 }
+  );
+}
+
+export function backendUnavailableRunResponse(detail = EXTERNAL_BACKEND_UNAVAILABLE_MESSAGE) {
+  return apiJson(
+    {
+      error: 'Execution backend unavailable',
+      stdout: '',
+      stderr: detail,
+      exitCode: 1,
+      executionTime: 0,
+      peakMemoryBytes: null
+    },
+    { status: 503 }
+  );
+}
+
+export function backendUnavailableRunSessionResponse(
+  detail = EXTERNAL_BACKEND_UNAVAILABLE_MESSAGE
+) {
+  return apiJson(
+    {
+      success: false,
+      error: detail
+    },
+    { status: 503 }
   );
 }
 
