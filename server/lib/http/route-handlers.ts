@@ -1,4 +1,4 @@
-import { getGccHealthDetails } from '../gcc-path.js';
+import { getGccHealthDetails, verifyGcc } from '../gcc-path.js';
 import { compileC } from '../compile-c.js';
 import { runBinary } from '../run-binary.js';
 import {
@@ -10,7 +10,7 @@ import {
 } from '../run-session.js';
 import { assessTraceReadiness, traceExecution } from '../c-interpreter.js';
 import { analyzeProgramIntent } from '../program-intent-ml.js';
-import type { RequestLike, ResponseLike } from './http-types.ts';
+import type { RequestLike, ResponseLike } from './http-types.js';
 import {
   getErrorMessage,
   getLanguageLabel,
@@ -21,7 +21,7 @@ import {
   normalizeInput,
   normalizeJsonBody,
   validateCode
-} from './request-validation.ts';
+} from './request-validation.js';
 import {
   analyzeServerErrorResponse,
   analyzeValidationResponse,
@@ -31,7 +31,7 @@ import {
   runValidationResponse,
   traceServerErrorResponse,
   traceValidationResponse
-} from './route-responses.ts';
+} from './route-responses.js';
 
 function queryStringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -39,9 +39,11 @@ function queryStringValue(value: unknown): string {
 
 export async function healthHandler(req: RequestLike, res: ResponseLike) {
   const gcc = await getGccHealthDetails();
+  const supportsCompileRun = await verifyGcc();
   return res.json({
     status: 'ok',
     ...gcc,
+    supportsCompileRun,
     requestProtocol: req.protocol ?? (req.secure ? 'https' : 'http'),
     httpsConfigured: Boolean(process.env.TLS_KEY_FILE && process.env.TLS_CERT_FILE),
     httpsRequired: process.env.REQUIRE_HTTPS === 'true',
