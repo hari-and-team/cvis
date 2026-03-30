@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Check, Code2, ExternalLink, Loader2, Play, UserRound } from 'lucide-svelte';
   import { isCompiling, isRunning, lastBinaryPath, userProfile } from '$lib/stores';
+  import { nativeExecutionEnabled } from '$lib/runtime-capabilities';
   import { createEventDispatcher } from 'svelte';
 
   const dispatch = createEventDispatcher<{
@@ -21,6 +22,8 @@
   function handleEditProfile() {
     dispatch('editProfile');
   }
+
+  const supportsNativeExecution = nativeExecutionEnabled();
 </script>
 
 <header class="header-bar">
@@ -30,7 +33,9 @@
     </div>
     <div class="logo-text">
       <h1 class="title">C Cloud Compiler</h1>
-      <span class="subtitle">Interactive Visualizer</span>
+      <span class="subtitle">
+        Interactive Visualizer{#if !supportsNativeExecution} · Trace-Only Deployment{/if}
+      </span>
     </div>
   </div>
 
@@ -74,7 +79,8 @@
     <button
       class="btn btn-secondary"
       class:loading={$isCompiling}
-      disabled={$isCompiling || $isRunning}
+      disabled={!supportsNativeExecution || $isCompiling || $isRunning}
+      title={!supportsNativeExecution ? 'Compile is disabled in this deployment.' : undefined}
       on:click={handleCompile}
     >
       {#if $isCompiling}
@@ -89,7 +95,8 @@
     <button
       class="btn btn-primary"
       class:running={$isRunning}
-      disabled={$isCompiling || $isRunning || !$lastBinaryPath}
+      disabled={!supportsNativeExecution || $isCompiling || $isRunning || !$lastBinaryPath}
+      title={!supportsNativeExecution ? 'Run is disabled in this deployment.' : undefined}
       on:click={handleRun}
     >
       {#if $isRunning}

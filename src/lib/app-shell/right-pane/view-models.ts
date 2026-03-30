@@ -1,14 +1,6 @@
 import type { UnifiedAnalysisResult } from '$lib/analysis/unified-analysis';
 import { buildMentorViewModel, type MentorViewModel } from '$lib/mentor/view-model';
-import type { PracticeRecommendation } from '$lib/analysis/code-type-finder';
-import type {
-  AnalyzeIntentResult,
-  CompileResult,
-  ExecutionResult,
-  TraceReadinessResult,
-  TraceStep,
-  UserProfile
-} from '$lib/types';
+import type { AnalyzeIntentResult, CompileResult, ExecutionResult, TraceStep, UserProfile } from '$lib/types';
 import { predictProgramIntent } from '$lib/visualizer/program-intent';
 
 export interface ConsoleViewModel {
@@ -19,24 +11,26 @@ export interface ConsoleViewModel {
   compileSummary: string | null;
   runSummary: string | null;
   canSendToStdin: boolean;
+  nativeExecutionEnabled: boolean;
   workspaceError: string | null;
 }
 
 export interface VisualizerViewModel {
   status: 'empty' | 'loading' | 'error' | 'ready';
+  nativeExecutionEnabled: boolean;
   traceUsesRuntimeInput: boolean;
   canStartTrace: boolean;
   hasCapturedRunInput: boolean;
+  hasManualTraceInput: boolean;
   isConsoleRunActive: boolean;
   inputReplayNeedsFreshRun: boolean;
   traceConsoleOutput: string;
   traceNotice: string | null;
   capturedRunInputLineCount: number;
+  manualTraceInputLineCount: number;
   traceConsoleStatus: string;
   isTracing: boolean;
   traceErr: string | null;
-  traceReadiness: TraceReadinessResult | null;
-  showTraceReadinessPrompt: boolean;
   traceSteps: TraceStep[];
   currentTraceStepData: TraceStep | null;
   loadingSteps: string[];
@@ -58,37 +52,9 @@ export interface IntentExplainerViewModel {
   sourceLabel: string;
 }
 
-export interface AnalysisImprovementItem {
-  id: string;
-  title: string;
-  location: string | null;
-  detail: string;
-  recommendation: string;
-  severity: 'info' | 'watch' | 'risk';
-}
-
-export interface AnalysisPracticeSummaryViewModel {
-  recommendation: PracticeRecommendation | null;
-  selectionSummary: string;
-  completionPercent: number;
-  currentMilestone: string | null;
-  hint: string | null;
-  queueCount: number;
-  alternateRecommendations: PracticeRecommendation[];
-}
-
 export interface AnalysisViewModel {
   status: 'empty' | 'ready';
   report: UnifiedAnalysisResult;
-  primaryTypeLabel: string;
-  identityExplanation: string;
-  identityEvidence: string[];
-  focusSectionLabel: string | null;
-  implementationStyle: string | null;
-  accessPattern: string | null;
-  confidencePercent: number;
-  improvementItems: AnalysisImprovementItem[];
-  practiceSummary: AnalysisPracticeSummaryViewModel;
   hasDetectedDsa: boolean;
   hasDetectedAlgorithms: boolean;
   dominantAnalysisSection: UnifiedAnalysisResult['staticReport']['sections'][number] | null;
@@ -247,113 +213,13 @@ function pickDominantSection(
   })[0] ?? sections[0] ?? null;
 }
 
-function formatSectionTitle(title: string): string {
-  if (title === 'Program' || title === 'Global Scope') {
-    return title;
-  }
-
-  return title.endsWith('()') ? title : `${title}()`;
-}
-
-function buildIdentityExplanation(
-  analysis: UnifiedAnalysisResult,
-  dominantSection: UnifiedAnalysisResult['staticReport']['sections'][number] | null
-): string {
-  const detailBits: string[] = [];
-
-  if (analysis.implementationStyle) {
-    detailBits.push(analysis.implementationStyle.toLowerCase());
-  }
-
-  if (analysis.accessPattern) {
-    detailBits.push(`${analysis.accessPattern} behavior`);
-  }
-
-  if (dominantSection) {
-    detailBits.push(`the strongest signal is in ${formatSectionTitle(dominantSection.title)}`);
-  }
-
-  if (detailBits.length === 0) {
-    return `The code most likely uses ${analysis.primaryType} based on the current structure and execution signals.`;
-  }
-
-  return `The code most likely uses ${analysis.primaryType} because ${detailBits.join(', ')}.`;
-}
-
-function buildImprovementItems(analysis: UnifiedAnalysisResult): AnalysisImprovementItem[] {
-  const fromSections: AnalysisImprovementItem[] = analysis.reverseReport.sectionReviews
-    .filter((review) => review.verdict !== 'keep')
-    .map((review) => ({
-      id: review.id,
-      title: review.title,
-      location: review.location,
-      detail: review.purpose,
-      recommendation: review.recommendation,
-      severity: review.verdict === 'refactor' ? 'risk' : 'watch'
-    }));
-
-  const fromSafety: AnalysisImprovementItem[] = analysis.reverseReport.safetyFindings.map((finding) => ({
-    id: finding.id,
-    title: finding.title,
-    location: null,
-    detail: finding.detail,
-    recommendation: finding.recommendation,
-    severity: finding.severity
-  }));
-
-  const fromOptimization: AnalysisImprovementItem[] = analysis.reverseReport.optimizationFindings.map((finding) => ({
-    id: finding.id,
-    title: finding.title,
-    location: null,
-    detail: finding.detail,
-    recommendation: finding.recommendation,
-    severity: finding.severity
-  }));
-
-  const severityWeight: Record<AnalysisImprovementItem['severity'], number> = {
-    risk: 0,
-    watch: 1,
-    info: 2
-  };
-
-  return [...fromSections, ...fromSafety, ...fromOptimization]
-    .sort((left, right) => {
-      if (severityWeight[left.severity] !== severityWeight[right.severity]) {
-        return severityWeight[left.severity] - severityWeight[right.severity];
-      }
-
-      if (left.location && !right.location) return -1;
-      if (!left.location && right.location) return 1;
-      return left.title.localeCompare(right.title);
-    })
-    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
-    .slice(0, 4);
-}
-
-function buildPracticeSummary(mentor: MentorViewModel): AnalysisPracticeSummaryViewModel {
-  const recommendation = mentor.selectedMentorProblem;
-  const alternateRecommendations = mentor.personalizedMentorQueue
-    .map((entry) => entry.recommendation)
-    .filter((candidate) => candidate.id !== recommendation?.id)
-    .slice(0, 2);
-
-  return {
-    recommendation,
-    selectionSummary: mentor.mentorSelectionSummary,
-    completionPercent: mentor.mentorCompletionPercent,
-    currentMilestone: mentor.mentorCurrentMilestone,
-    hint: mentor.mentorHintCards[0]?.body ?? null,
-    queueCount: mentor.recommendedProblemsCount,
-    alternateRecommendations
-  };
-}
-
 export function buildConsoleViewModel({
   output,
   pendingRunInputEcho,
   lastCompileResult,
   lastExecutionResult,
   canSendToStdin,
+  nativeExecutionEnabled,
   workspaceError
 }: {
   output: string;
@@ -361,6 +227,7 @@ export function buildConsoleViewModel({
   lastCompileResult: CompileResult | null;
   lastExecutionResult: ExecutionResult | null;
   canSendToStdin: boolean;
+  nativeExecutionEnabled: boolean;
   workspaceError: string | null;
 }): ConsoleViewModel {
   return {
@@ -379,6 +246,7 @@ export function buildConsoleViewModel({
         }`
       : null,
     canSendToStdin,
+    nativeExecutionEnabled,
     workspaceError
   };
 }
@@ -390,14 +258,14 @@ export function buildVisualizerViewModel({
   lastExecutionResult,
   lastCompileResult,
   lastRunInputTranscript,
+  manualTraceInput,
   pendingRunInputEcho,
   traceSteps,
   currentTraceStepData,
   isTracing,
   traceErr,
-  traceNotice,
-  traceReadiness,
-  showTraceReadinessPrompt
+  nativeExecutionEnabled,
+  traceNotice
 }: {
   editorCode: string;
   runConsoleTranscript: string;
@@ -405,14 +273,14 @@ export function buildVisualizerViewModel({
   lastExecutionResult: ExecutionResult | null;
   lastCompileResult: CompileResult | null;
   lastRunInputTranscript: string;
+  manualTraceInput: string;
   pendingRunInputEcho: string;
   traceSteps: TraceStep[];
   currentTraceStepData: TraceStep | null;
   isTracing: boolean;
   traceErr: string | null;
+  nativeExecutionEnabled: boolean;
   traceNotice: string | null;
-  traceReadiness: TraceReadinessResult | null;
-  showTraceReadinessPrompt: boolean;
 }): VisualizerViewModel {
   const intentPrediction = predictProgramIntent(editorCode);
   const output = runConsoleTranscript
@@ -425,19 +293,26 @@ export function buildVisualizerViewModel({
   const renderedOutput = `${output}${pendingRunInputEcho}`;
   const traceUsesRuntimeInput = /\bscanf\s*\(/.test(editorCode);
   const hasCapturedRunInput = lastRunInputTranscript.length > 0;
+  const hasManualTraceInput = manualTraceInput.length > 0;
   const isConsoleRunActive = typeof runSessionId === 'string' && runSessionId.length > 0;
   const inputReplayNeedsFreshRun =
     traceUsesRuntimeInput &&
     hasCapturedRunInput &&
     lastExecutionResult?.completionReason === 'stopped';
-  const canReplayCapturedInput =
-    hasCapturedRunInput && !isConsoleRunActive && !inputReplayNeedsFreshRun;
+  const canReplayCapturedInput = hasCapturedRunInput && !inputReplayNeedsFreshRun;
   const canStartTrace =
-    !isConsoleRunActive && (!traceUsesRuntimeInput || canReplayCapturedInput);
+    !isConsoleRunActive &&
+    (!traceUsesRuntimeInput || canReplayCapturedInput || hasManualTraceInput);
   const capturedRunInputLineCount =
     lastRunInputTranscript.length === 0
       ? 0
       : lastRunInputTranscript
+          .split('\n')
+          .filter((line, index, lines) => line.length > 0 || index < lines.length - 1).length;
+  const manualTraceInputLineCount =
+    manualTraceInput.length === 0
+      ? 0
+      : manualTraceInput
           .split('\n')
           .filter((line, index, lines) => line.length > 0 || index < lines.length - 1).length;
 
@@ -449,22 +324,29 @@ export function buildVisualizerViewModel({
         : traceSteps.length > 0
           ? 'ready'
           : 'empty',
+    nativeExecutionEnabled,
     traceUsesRuntimeInput,
     canStartTrace,
     hasCapturedRunInput,
+    hasManualTraceInput,
     isConsoleRunActive,
     inputReplayNeedsFreshRun,
     traceConsoleOutput: renderedOutput || output,
     traceNotice,
     capturedRunInputLineCount,
+    manualTraceInputLineCount,
     traceConsoleStatus: traceUsesRuntimeInput
       ? isConsoleRunActive
         ? 'finish current run'
-        : inputReplayNeedsFreshRun
-          ? 'rerun before trace'
-          : canReplayCapturedInput
-            ? 'stdin replay ready'
-            : 'run first'
+        : hasManualTraceInput
+          ? 'manual stdin ready'
+          : inputReplayNeedsFreshRun
+            ? 'rerun before trace'
+            : canReplayCapturedInput
+              ? 'stdin replay ready'
+              : nativeExecutionEnabled
+                ? 'run first or enter stdin'
+                : 'enter stdin'
       : isConsoleRunActive
         ? 'finish current run'
         : renderedOutput
@@ -472,8 +354,6 @@ export function buildVisualizerViewModel({
           : 'optional',
     isTracing,
     traceErr,
-    traceReadiness,
-    showTraceReadinessPrompt,
     traceSteps,
     currentTraceStepData,
     loadingSteps: getLoadingSteps(intentPrediction.primaryLabel),
@@ -484,13 +364,11 @@ export function buildVisualizerViewModel({
 export function buildAnalysisViewModel({
   editorCode,
   analysis,
-  intentExplainer,
-  mentor
+  intentExplainer
 }: {
   editorCode: string;
   analysis: UnifiedAnalysisResult;
   intentExplainer: IntentExplainerViewModel;
-  mentor: MentorViewModel;
 }): AnalysisViewModel {
   const structureIntents = new Set(['linked-list', 'stack', 'queue', 'tree', 'graph']);
   const algorithmIntents = new Set([
@@ -529,29 +407,18 @@ export function buildAnalysisViewModel({
     algorithmTechniques,
     Math.max(editorCode.split('\n').length, 1)
   );
-  const dominantAnalysisSection = pickDominantSection(analysis.staticReport.sections);
-  const mainAnalysisSection =
-    analysis.staticReport.sections.find((section) => {
-      const title = section.title.trim().toLowerCase();
-      return title === 'main' || title === 'main()';
-    }) ?? null;
 
   return {
     status: editorCode.trim().length > 0 ? 'ready' : 'empty',
     report: analysis,
-    primaryTypeLabel: analysis.primaryType,
-    identityExplanation: buildIdentityExplanation(analysis, dominantAnalysisSection),
-    identityEvidence: analysis.evidence.slice(0, 4),
-    focusSectionLabel: dominantAnalysisSection ? formatSectionTitle(dominantAnalysisSection.title) : null,
-    implementationStyle: analysis.implementationStyle,
-    accessPattern: analysis.accessPattern,
-    confidencePercent: Math.round(analysis.confidence * 100),
-    improvementItems: buildImprovementItems(analysis),
-    practiceSummary: buildPracticeSummary(mentor),
     hasDetectedDsa: detectedDsaCards.length > 0,
     hasDetectedAlgorithms: detectedAlgorithmCards.length > 0,
-    dominantAnalysisSection,
-    mainAnalysisSection,
+    dominantAnalysisSection: pickDominantSection(analysis.staticReport.sections),
+    mainAnalysisSection:
+      analysis.staticReport.sections.find((section) => {
+        const title = section.title.trim().toLowerCase();
+        return title === 'main' || title === 'main()';
+      }) ?? null,
     detectedDsaCards,
     detectedAlgorithmCards,
     reverseRiskCount: analysis.reverseReport.safetyFindings.filter((finding) => finding.severity === 'risk').length,

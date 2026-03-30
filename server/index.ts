@@ -12,6 +12,8 @@ import {
 
 const app = createApp() as ListenableAppLike;
 
+export default app as never;
+
 function parseBooleanEnv(name: string): boolean {
   return process.env[name]?.trim().toLowerCase() === 'true';
 }
@@ -125,4 +127,6 @@ async function startServer() {
   });
 }
 
-void startServer();
+if (!process.env.VERCEL) {
+  void startServer();
+}

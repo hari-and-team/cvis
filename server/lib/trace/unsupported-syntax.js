@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createTraceFailure } from './trace-errors.js';
 
 const UNSUPPORTED_TRACE_FEATURES = [

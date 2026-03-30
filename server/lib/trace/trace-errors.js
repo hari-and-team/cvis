@@ -1,3 +1,4 @@
+// @ts-nocheck
 const TRACE_FAILURE_STEP_LIMIT = 250;
 
 export function createTraceFailure(message, options = {}) {

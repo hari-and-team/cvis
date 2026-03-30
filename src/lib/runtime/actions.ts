@@ -1,14 +1,11 @@
 import {
   closeRunInput,
   compileCode,
-  executeCode,
-  getTraceReadiness,
   pollRunSession,
   sendRunInput,
   startRunSession,
   stopRunSession,
-  traceCode,
-  EXECUTION_MODE
+  traceCode
 } from '$lib/api';
 import {
   currentStepIndex,
@@ -25,7 +22,10 @@ import {
   runSessionId,
   traceSteps
 } from '$lib/stores';
-import type { TraceReadinessResult } from '$lib/types';
+import {
+  nativeExecutionEnabled,
+  nativeExecutionUnavailableMessage
+} from '$lib/runtime-capabilities';
 import { validateCompileRequest, validateTraceRequest } from '$lib/validation';
 
 interface CompileRunActionParams {
@@ -36,13 +36,10 @@ interface TraceActionParams {
   code: string;
   breakpoints?: number[];
   input?: string;
-  force?: boolean;
 }
 
 interface TraceActionResult {
   traceErr: string | null;
-  readiness: TraceReadinessResult | null;
-  didTrace: boolean;
 }
 
 function getErrorMessage(err: unknown, fallback: string): string {
@@ -238,6 +235,13 @@ export async function runCompileAction({
   code
 }: CompileRunActionParams): Promise<boolean> {
   try {
+    if (!nativeExecutionEnabled()) {
+      errorMessage.set(nativeExecutionUnavailableMessage());
+      lastCompileResult.set(null);
+      lastBinaryPath.set(null);
+      return false;
+    }
+
     const validationError = validateCompileRequest(code);
     if (validationError) {
       errorMessage.set(validationError);
@@ -282,72 +286,16 @@ export async function runCompileAction({
   }
 }
 
-function codeNeedsLiveInput(code: string): boolean {
-  return /\b(scanf|fscanf|getchar|fgets|gets)\s*\(/.test(code);
-}
-
-async function runServerlessCodeAction(code: string): Promise<void> {
-  try {
-    const validationError = validateCompileRequest(code);
-    if (validationError) {
-      errorMessage.set(validationError);
-      return;
-    }
-
-    if (codeNeedsLiveInput(code)) {
-      errorMessage.set(
-        'This deployment uses stateless execution, so live stdin is not available here. Use a stateful backend deployment for scanf/getchar-style programs.'
-      );
-      return;
-    }
-
-    await stopActiveRuntimeSession();
-
-    isRunning.set(true);
-    errorMessage.set(null);
-    resetRuntimeOutputState();
-
-    const result = await executeCode({
-      code,
-      args: [],
-      input: ''
-    });
-
-    lastCompileResult.set(result.compile);
-
-    if (!result.compile.success) {
-      errorMessage.set(result.compile.errors.join('\n'));
-      lastBinaryPath.set(null);
-      return;
-    }
-
-    lastBinaryPath.set(result.compile.binary ?? null);
-
-    if (!result.execution) {
-      errorMessage.set('Execution failed before a runtime result was returned.');
-      return;
-    }
-
-    lastExecutionResult.set(result.execution);
-    runConsoleTranscript.set(`${result.execution.stdout}${result.execution.stderr}`);
-
-    if (result.execution.exitCode !== 0 && result.execution.stderr) {
-      errorMessage.set(result.execution.stderr);
-    }
-  } catch (err) {
-    const message = getErrorMessage(err, 'An error occurred');
-    errorMessage.set(message);
-    console.error('Run error:', err);
-  } finally {
-    isRunning.set(false);
-  }
-}
-
-async function runInteractiveBinaryAction(binaryPath: string | null): Promise<void> {
+export async function runBinaryAction(binaryPath: string | null): Promise<void> {
   let startedSessionId: string | null = null;
   let consecutivePollFailures = 0;
 
   try {
+    if (!nativeExecutionEnabled()) {
+      errorMessage.set(nativeExecutionUnavailableMessage());
+      return;
+    }
+
     if (!binaryPath) {
       errorMessage.set('Compile successfully before running the program.');
       return;
@@ -465,17 +413,6 @@ async function runInteractiveBinaryAction(binaryPath: string | null): Promise<vo
   }
 }
 
-export async function runBinaryAction(params: {
-  binaryPath: string | null;
-  code: string;
-}): Promise<void> {
-  if (EXECUTION_MODE === 'serverless') {
-    return runServerlessCodeAction(params.code);
-  }
-
-  return runInteractiveBinaryAction(params.binaryPath);
-}
-
 export async function sendRuntimeInputLine(line: string): Promise<void> {
   const sessionId = activeRunSessionId;
   if (!sessionId) {
@@ -550,8 +487,7 @@ export async function interruptRuntimeSession(): Promise<void> {
 export async function runTraceAction({
   code,
   breakpoints = [],
-  input,
-  force = false
+  input
 }: TraceActionParams): Promise<TraceActionResult> {
   try {
     const validationError = validateTraceRequest(code);
@@ -560,7 +496,7 @@ export async function runTraceAction({
       errorMessage.set(validationError);
       traceSteps.set([]);
       currentStepIndex.set(0);
-      return { traceErr: validationError, readiness: null, didTrace: false };
+      return { traceErr: validationError };
     }
 
     errorMessage.set(null);
@@ -568,32 +504,16 @@ export async function runTraceAction({
     traceSteps.set([]);
     currentStepIndex.set(0);
 
-    const readiness = await getTraceReadiness({ code });
-    if (!force && readiness.status !== 'supported') {
-      return {
-        traceErr: null,
-        readiness,
-        didTrace: false
-      };
-    }
-
     const result = await traceCode({
       code,
       breakpoints,
-      input,
-      force
+      input: input ?? ''
     });
-
-    const effectiveReadiness = result.readiness ?? readiness;
 
     if (result.success) {
       traceSteps.set(result.steps);
       currentStepIndex.set(getInitialTraceStepIndex(result.steps));
-      return {
-        traceErr: null,
-        readiness: effectiveReadiness,
-        didTrace: true
-      };
+      return { traceErr: null };
     }
 
     const traceErr = result.errors.join('\n') || 'Trace failed';
@@ -601,11 +521,7 @@ export async function runTraceAction({
     traceSteps.set([]);
     currentStepIndex.set(0);
     errorMessage.set(traceErr);
-    return {
-      traceErr,
-      readiness: effectiveReadiness,
-      didTrace: false
-    };
+    return { traceErr };
   } catch (err) {
     const message = getErrorMessage(err, 'An error occurred during tracing');
     console.error('Trace error:', err);
@@ -613,6 +529,6 @@ export async function runTraceAction({
     traceSteps.set([]);
     currentStepIndex.set(0);
     errorMessage.set(message);
-    return { traceErr: message, readiness: null, didTrace: false };
+    return { traceErr: message };
   }
 }
