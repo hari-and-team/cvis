@@ -227,6 +227,10 @@
     traceSteps.set([]);
   }
 
+  function focusEditor() {
+    taRef?.focus();
+  }
+
 </script>
 
 <div class="editor-pane">
@@ -240,7 +244,7 @@
   </div>
 
   <!-- Editor Area -->
-  <div class="editor-area">
+  <div class="editor-area" role="presentation" on:pointerdown={focusEditor}>
     <!-- Line Numbers Gutter -->
     <div bind:this={lnRef} class="line-gutter">
       {#each Array.from({ length: lineCount }, (_, i) => i) as i}
@@ -261,6 +265,7 @@
       <pre
         bind:this={preRef}
         class="code-display"
+        aria-hidden="true"
       >{@html highlight(code)}</pre>
       <textarea
         bind:this={taRef}
@@ -270,6 +275,8 @@
         on:scroll={syncScroll}
         wrap="off"
         spellcheck={false}
+        autocapitalize="off"
+        autocomplete="off"
         class="code-input"
       ></textarea>
     </div>
@@ -407,8 +414,8 @@
     padding: 12px;
     margin: 0;
     background: transparent;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
+    color: #e5e5e5;
+    -webkit-text-fill-color: currentColor;
     caret-color: #e5e5e5;
     resize: none;
     outline: none;

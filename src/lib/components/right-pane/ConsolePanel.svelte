@@ -9,6 +9,7 @@
   export let onEof: () => Promise<void>;
 
   let outputRef: HTMLDivElement;
+  let terminalInputRef: HTMLTextAreaElement;
   let terminalInputBuffer = '';
   let terminalSending = false;
   let pendingInputLines: string[] = [];
@@ -31,14 +32,14 @@
     previousRenderedOutput = '';
     if (canSendToStdin) {
       queueMicrotask(() => {
-        focusTerminalOutput();
+        focusTerminalInput();
         scrollTerminalToBottom();
       });
     }
   }
 
   $: if (canSendToStdin && outputRef) {
-    queueMicrotask(() => focusTerminalOutput());
+    queueMicrotask(() => focusTerminalInput());
   }
 
   $: if (outputRef && renderedOutput !== previousRenderedOutput) {
@@ -46,8 +47,14 @@
     queueMicrotask(() => scrollTerminalToBottom());
   }
 
-  function focusTerminalOutput() {
-    outputRef?.focus();
+  function focusTerminalInput() {
+    if (!terminalInputRef) {
+      return;
+    }
+
+    terminalInputRef.focus();
+    const cursor = terminalInputRef.value.length;
+    terminalInputRef.setSelectionRange(cursor, cursor);
   }
 
   function scrollTerminalToBottom() {
@@ -90,7 +97,7 @@
     } finally {
       terminalSending = false;
       flushPromise = null;
-      queueMicrotask(() => focusTerminalOutput());
+      queueMicrotask(() => focusTerminalInput());
     }
   }
 
@@ -103,7 +110,7 @@
       console.error(err instanceof Error ? err.message : 'Failed to interrupt runtime session');
     }
 
-    queueMicrotask(() => focusTerminalOutput());
+    queueMicrotask(() => focusTerminalInput());
   }
 
   async function handleRuntimeEof() {
@@ -115,7 +122,14 @@
     } catch (err) {
       console.error(err instanceof Error ? err.message : 'Failed to send EOF to runtime session');
     } finally {
-      queueMicrotask(() => focusTerminalOutput());
+      queueMicrotask(() => focusTerminalInput());
+    }
+  }
+
+  function syncTerminalInputBuffer(value: string) {
+    terminalInputBuffer = value;
+    if (terminalInputRef && terminalInputRef.value !== value) {
+      terminalInputRef.value = value;
     }
   }
 
@@ -145,52 +159,38 @@
 
     if (event.key === 'Tab') {
       event.preventDefault();
-      queueMicrotask(() => focusTerminalOutput());
+      queueMicrotask(() => focusTerminalInput());
       return;
     }
 
-    if (event.ctrlKey || event.metaKey || event.altKey) {
+    if (event.altKey) {
       return;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
       const line = terminalInputBuffer;
-      terminalInputBuffer = '';
+      syncTerminalInputBuffer('');
       enqueueInputLine(line);
-      queueMicrotask(() => focusTerminalOutput());
-      return;
-    }
-
-    if (event.key === 'Backspace') {
-      event.preventDefault();
-      if (terminalInputBuffer.length > 0) {
-        terminalInputBuffer = terminalInputBuffer.slice(0, -1);
-      }
-      return;
-    }
-
-    if (event.key.length === 1) {
-      event.preventDefault();
-      terminalInputBuffer += event.key;
+      queueMicrotask(() => focusTerminalInput());
     }
   }
 
-  function handleTerminalPaste(event: ClipboardEvent) {
+  function handleTerminalInput(event: Event) {
     if (!canSendToStdin) {
+      syncTerminalInputBuffer('');
       return;
     }
 
-    const text = event.clipboardData?.getData('text') ?? '';
-    if (!text) return;
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLTextAreaElement)) {
+      return;
+    }
 
-    event.preventDefault();
+    const normalized = normalizeTerminalText(target.value);
+    const { lines, remainder } = consumeBufferedLines(normalized);
+    syncTerminalInputBuffer(remainder);
 
-    const normalized = normalizeTerminalText(text);
-    const combined = `${terminalInputBuffer}${normalized}`;
-    const { lines, remainder } = consumeBufferedLines(combined);
-
-    terminalInputBuffer = remainder;
     if (lines.length > 0) {
       pendingInputLines = [...pendingInputLines, ...lines];
       if (!flushPromise) {
@@ -199,9 +199,17 @@
     }
 
     queueMicrotask(() => {
-      focusTerminalOutput();
+      focusTerminalInput();
       scrollTerminalToBottom();
     });
+  }
+
+  function handleTerminalPointerdown(event: PointerEvent) {
+    if (!canSendToStdin) {
+      return;
+    }
+
+    focusTerminalInput();
   }
 </script>
 
@@ -227,8 +235,8 @@
     aria-label="Program console"
     aria-multiline="true"
     tabindex="0"
-    on:keydown={handleTerminalKeydown}
-    on:paste={handleTerminalPaste}
+    on:focus={focusTerminalInput}
+    on:pointerdown={handleTerminalPointerdown}
   >
     {#if output}
       <pre class="output-text" class:error-output={hasError}>{renderedOutput}{#if canSendToStdin}<span class="terminal-caret"></span>{/if}</pre>
@@ -241,5 +249,41 @@
         <span class="empty-hint">Compile to validate, then run to start a live console session</span>
       </div>
     {/if}
+    {#if canSendToStdin}
+      <textarea
+        bind:this={terminalInputRef}
+        class="terminal-input-proxy"
+        aria-label="Program stdin"
+        autocapitalize="off"
+        autocomplete="off"
+        rows="1"
+        spellcheck={false}
+        on:input={handleTerminalInput}
+        on:keydown={handleTerminalKeydown}
+      ></textarea>
+    {/if}
   </div>
 </div>
+
+<style>
+  .terminal-output {
+    position: relative;
+  }
+
+  .terminal-input-proxy {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    color: transparent;
+    caret-color: transparent;
+    opacity: 0;
+    pointer-events: none;
+    resize: none;
+  }
+</style>
