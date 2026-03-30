@@ -1,6 +1,6 @@
 import { json, type RequestEvent } from '@sveltejs/kit';
 import { env as publicEnv } from '$env/dynamic/public';
-import { normalizeApiBase, resolveExecutionMode } from '$lib/execution-mode';
+import { normalizeApiBase, normalizeExecutionMode, resolveExecutionMode } from '$lib/execution-mode';
 
 export const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE =
   'Compile and live run are disabled in this deployment. Use Trace Execution and Analysis, or connect an external backend for GCC-based execution.';
@@ -71,18 +71,76 @@ export function unsupportedRunSessionResponse(status = 501) {
   );
 }
 
-export function healthPayload(event: RequestEvent) {
+async function resolveExternalBackendCapabilities(apiBase: string): Promise<{
+  executionMode: 'full' | 'trace-only' | null;
+  supportsCompileRun: boolean | null;
+}> {
+  try {
+    const response = await fetch(`${apiBase}/health`, {
+      headers: {
+        Accept: 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      return {
+        executionMode: null,
+        supportsCompileRun: false
+      };
+    }
+
+    const payload = (await response.json()) as {
+      executionMode?: unknown;
+      supportsCompileRun?: unknown;
+    };
+
+    return {
+      executionMode:
+        typeof payload.executionMode === 'string'
+          ? normalizeExecutionMode(payload.executionMode.trim())
+          : null,
+      supportsCompileRun:
+        typeof payload.supportsCompileRun === 'boolean' ? payload.supportsCompileRun : null
+    };
+  } catch {
+    return {
+      executionMode: null,
+      supportsCompileRun: false
+    };
+  }
+}
+
+export async function healthPayload(event: RequestEvent) {
   const apiBase = normalizeApiBase(publicEnv.PUBLIC_API_BASE);
-  const executionMode = resolveExecutionMode({
+  let executionMode = resolveExecutionMode({
     explicitMode: publicEnv.PUBLIC_EXECUTION_MODE,
     apiBase,
     dev: !process.env.VERCEL && process.env.NODE_ENV !== 'production'
   });
+  let supportsCompileRun = executionMode === 'full';
+
+  if (apiBase) {
+    const backendCapabilities = await resolveExternalBackendCapabilities(apiBase);
+
+    if (backendCapabilities.supportsCompileRun === false) {
+      executionMode = 'trace-only';
+      supportsCompileRun = false;
+    } else if (backendCapabilities.supportsCompileRun === true) {
+      executionMode = 'full';
+      supportsCompileRun = true;
+    } else if (backendCapabilities.executionMode) {
+      executionMode = backendCapabilities.executionMode;
+      supportsCompileRun = backendCapabilities.executionMode === 'full';
+    } else {
+      executionMode = 'trace-only';
+      supportsCompileRun = false;
+    }
+  }
 
   return {
     status: 'ok',
     executionMode,
-    supportsCompileRun: executionMode === 'full',
+    supportsCompileRun,
     supportsTrace: true,
     supportsAnalysis: true,
     apiBase: apiBase || null,
