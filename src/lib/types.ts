@@ -20,12 +20,24 @@ export interface ExecutionRequest {
   input?: string;
 }
 
+export interface SourceExecutionRequest {
+  code: string;
+  args?: string[];
+  input?: string;
+}
+
 export interface ExecutionResult {
   stdout: string;
   stderr: string;
   exitCode: number;
   executionTime: number;
   peakMemoryBytes?: number | null;
+}
+
+export interface SourceExecutionResult {
+  success: boolean;
+  compile: CompileResult;
+  execution: ExecutionResult | null;
 }
 
 export interface RunSessionStartRequest {
