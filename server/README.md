@@ -56,6 +56,11 @@ CORS_ORIGINS=https://app.example.com,https://staging.example.com
 TRUST_PROXY=true
 REQUIRE_HTTPS=true
 
+# optional preview-origin support for Vercel frontend previews
+# example:
+# CORS_ORIGIN_REGEX=^https://your-frontend-.*\.vercel\.app$
+CORS_ORIGIN_REGEX=
+
 # direct TLS on the backend instead of proxy termination
 TLS_KEY_FILE=/etc/ssl/private/cvis.key
 TLS_CERT_FILE=/etc/ssl/certs/cvis.crt
@@ -67,6 +72,14 @@ HTTPS_PUBLIC_ORIGIN=https://api.example.com
 
 If the frontend and backend are deployed behind the same reverse proxy, you can usually keep browser traffic same-origin by routing `/api` to the backend service.
 The backend now sends API-focused security headers, supports direct HTTPS with TLS files, and can enforce HTTPS behind a trusted reverse proxy when `REQUIRE_HTTPS=true`.
+
+### Vercel note
+
+The backend can now be exposed through Vercel functions, but Vercel should be treated as a stateless runtime:
+
+- `POST /api/execute`, `POST /api/trace`, and `POST /api/analyze/intent` are the safest fit
+- live session endpoints (`/api/run/start`, `/api/run/poll`, `/api/run/input`, `/api/run/eof`, `/api/run/stop`) are disabled by default on Vercel because they depend on in-memory process state
+- if you need the full interactive console, deploy the backend on a stateful Node/container host and keep `PUBLIC_EXECUTION_MODE=interactive` on the frontend
 
 ### Start in Docker (fallback)
 
@@ -233,6 +246,41 @@ Notes:
 - Windows uses `.exe` binaries; Linux and macOS use `.out`.
 - `args` must be an array when provided.
 - `input` must be a string when provided.
+
+### Compile And Execute In One Request
+
+```bash
+POST /api/execute
+Content-Type: application/json
+
+{
+  "code": "int main() { return 0; }",
+  "args": [],
+  "input": ""
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "compile": {
+    "success": true,
+    "output": "Compiled successfully",
+    "errors": [],
+    "warnings": [],
+    "compilationTime": 32
+  },
+  "execution": {
+    "stdout": "",
+    "stderr": "",
+    "exitCode": 0,
+    "executionTime": 2
+  }
+}
+```
+
+This endpoint is recommended for stateless/serverless deployments because it avoids reusing a temporary binary path across requests.
 
 ### Trace Execution
 

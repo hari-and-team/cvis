@@ -1,11 +1,13 @@
 import {
   closeRunInput,
   compileCode,
+  executeCode,
   pollRunSession,
   sendRunInput,
   startRunSession,
   stopRunSession,
-  traceCode
+  traceCode,
+  EXECUTION_MODE
 } from '$lib/api';
 import {
   currentStepIndex,
@@ -275,7 +277,68 @@ export async function runCompileAction({
   }
 }
 
-export async function runBinaryAction(binaryPath: string | null): Promise<void> {
+function codeNeedsLiveInput(code: string): boolean {
+  return /\b(scanf|fscanf|getchar|fgets|gets)\s*\(/.test(code);
+}
+
+async function runServerlessCodeAction(code: string): Promise<void> {
+  try {
+    const validationError = validateCompileRequest(code);
+    if (validationError) {
+      errorMessage.set(validationError);
+      return;
+    }
+
+    if (codeNeedsLiveInput(code)) {
+      errorMessage.set(
+        'This deployment uses stateless execution, so live stdin is not available here. Use a stateful backend deployment for scanf/getchar-style programs.'
+      );
+      return;
+    }
+
+    await stopActiveRuntimeSession();
+
+    isRunning.set(true);
+    errorMessage.set(null);
+    resetRuntimeOutputState();
+
+    const result = await executeCode({
+      code,
+      args: [],
+      input: ''
+    });
+
+    lastCompileResult.set(result.compile);
+
+    if (!result.compile.success) {
+      errorMessage.set(result.compile.errors.join('\n'));
+      lastBinaryPath.set(null);
+      return;
+    }
+
+    lastBinaryPath.set(result.compile.binary ?? null);
+
+    if (!result.execution) {
+      errorMessage.set('Execution failed before a runtime result was returned.');
+      return;
+    }
+
+    lastExecutionResult.set(result.execution);
+    runConsoleTranscript.set(`${result.execution.stdout}${result.execution.stderr}`);
+
+    if (result.execution.exitCode !== 0 && result.execution.stderr) {
+      errorMessage.set(result.execution.stderr);
+    }
+  } catch (err) {
+    const message = getErrorMessage(err, 'An error occurred');
+    errorMessage.set(message);
+    console.error('Run error:', err);
+  } finally {
+    isRunning.set(false);
+  }
+}
+
+async function runInteractiveBinaryAction(binaryPath: string | null): Promise<void> {
   let startedSessionId: string | null = null;
   let consecutivePollFailures = 0;
 
@@ -395,6 +458,17 @@ export async function runBinaryAction(binaryPath: string | null): Promise<void> 
   } finally {
     isRunning.set(false);
   }
+}
+
+export async function runBinaryAction(params: {
+  binaryPath: string | null;
+  code: string;
+}): Promise<void> {
+  if (EXECUTION_MODE === 'serverless') {
+    return runServerlessCodeAction(params.code);
+  }
+
+  return runInteractiveBinaryAction(params.binaryPath);
 }
 
 export async function sendRuntimeInputLine(line: string): Promise<void> {

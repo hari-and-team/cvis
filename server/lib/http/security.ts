@@ -2,8 +2,14 @@ import { DEV_CORS_ORIGINS } from '../../config/constants.js';
 import type { NextLike, RequestLike, ResponseLike } from './http-types.ts';
 
 type CorsSettings = {
-  origin: boolean | string | string[];
+  origin: (
+    origin: string | undefined,
+    callback: (error: Error | null, allow?: boolean | string) => void
+  ) => void;
   credentials: boolean;
+  methods: string[];
+  allowedHeaders: string[];
+  maxAge: number;
 };
 
 type RateLimitPolicy = {
@@ -39,6 +45,33 @@ function parseExplicitOrigins(): string[] {
       .map((value) => value.trim())
       .filter(Boolean) ?? []
   );
+}
+
+function parseOriginRegexes(): RegExp[] {
+  const values =
+    process.env.CORS_ORIGIN_REGEX
+      ?.split(',')
+      .map((value) => value.trim())
+      .filter(Boolean) ?? [];
+
+  return values.flatMap((value) => {
+    try {
+      return [new RegExp(value)];
+    } catch {
+      console.warn(`Ignoring invalid CORS_ORIGIN_REGEX entry: ${value}`);
+      return [];
+    }
+  });
+}
+
+function parseListEnv(name: string, fallback: string[]): string[] {
+  const values =
+    process.env[name]
+      ?.split(',')
+      .map((value) => value.trim())
+      .filter(Boolean) ?? [];
+
+  return values.length > 0 ? values : fallback;
 }
 
 function isLocalHost(hostname: string): boolean {
@@ -88,6 +121,16 @@ function parseBooleanEnv(name: string): boolean {
   return process.env[name]?.trim().toLowerCase() === 'true';
 }
 
+function parseIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function resolveHttpsRedirectOrigin(req: RequestLike): string | null {
   const explicitOrigin = process.env.HTTPS_PUBLIC_ORIGIN?.trim().replace(/\/$/, '');
   if (explicitOrigin) {
@@ -135,32 +178,50 @@ function resolveRateLimitKey(req: RequestLike): string {
 
 export function resolveCorsSettings(): CorsSettings {
   const explicitOrigins = parseExplicitOrigins();
+  const regexOrigins = parseOriginRegexes();
+  const methods = parseListEnv('CORS_METHODS', ['GET', 'HEAD', 'POST', 'OPTIONS']);
+  const allowedHeaders = parseListEnv('CORS_ALLOWED_HEADERS', ['Content-Type', 'Authorization']);
+  const maxAge = parseIntegerEnv('CORS_MAX_AGE_SECONDS', 86_400);
 
   if (explicitOrigins.includes('*')) {
     return {
-      origin: true,
-      credentials: false
+      origin: (_origin, callback) => callback(null, true),
+      credentials: false,
+      methods,
+      allowedHeaders,
+      maxAge
     };
   }
+
+  let allowedOrigins: string[] = [];
 
   if (explicitOrigins.length > 0) {
-    return {
-      origin: explicitOrigins.length === 1 ? explicitOrigins[0] : explicitOrigins,
-      credentials: true
-    };
-  }
-
-  if (process.env.NODE_ENV === 'production') {
+    allowedOrigins = explicitOrigins;
+  } else if (process.env.NODE_ENV === 'production') {
     const frontendUrl = process.env.FRONTEND_URL?.trim();
-    return {
-      origin: frontendUrl || false,
-      credentials: Boolean(frontendUrl)
-    };
+    allowedOrigins = frontendUrl ? [frontendUrl] : [];
+  } else {
+    allowedOrigins = DEV_CORS_ORIGINS;
   }
 
   return {
-    origin: DEV_CORS_ORIGINS,
-    credentials: true
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOrigins.includes(origin) || regexOrigins.some((pattern) => pattern.test(origin))) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`CORS blocked for origin "${origin}"`), false);
+    },
+    credentials: allowedOrigins.length > 0 || regexOrigins.length > 0,
+    methods,
+    allowedHeaders,
+    maxAge
   };
 }
 

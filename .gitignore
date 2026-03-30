@@ -41,3 +41,4 @@ public/wasm/*.mem
 *.tmp
 *.temp
 .cvis-toolchain/
+.vercel

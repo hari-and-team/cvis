@@ -1,26 +1,17 @@
 <script lang="ts">
   import { flip } from 'svelte/animate';
   import { fly } from 'svelte/transition';
-  import type { VisualizerLinearItemView } from '$lib/visualizer/render-model';
 
   export let label = 'Structure';
   export let values: string[] = [];
-  export let stackItems: VisualizerLinearItemView[] = [];
-  export let poppedItems: string[] = [];
+  export let recentlyRemoved: string[] = [];
+  export let removedLabel: string | null = null;
 
   $: normalizedLabel = label.trim().toLowerCase();
   $: isStack = normalizedLabel === 'stack';
-  $: renderedStackItems =
-    stackItems.length > 0
-      ? stackItems
-      : (values.map((item, index) => ({
-          displayValue: item,
-          state: index === values.length - 1 ? 'top' : 'active'
-        })) as VisualizerLinearItemView[]);
-  $: activeStackItems = renderedStackItems.filter((item) => item.state !== 'popped');
-  $: poppedStackItems = poppedItems;
-  $: latestPoppedItem = poppedStackItems[0] ?? null;
-  $: olderPoppedItems = poppedStackItems.slice(1);
+  $: resolvedRemovedLabel = removedLabel ?? (isStack ? 'Popped values' : 'Removed values');
+  $: latestRemovedItem = recentlyRemoved[0] ?? null;
+  $: olderRemovedItems = recentlyRemoved.slice(1);
 </script>
 
 <section class="viz-section">
@@ -30,81 +21,79 @@
   </div>
 
   {#if isStack}
-    <div class="stack-visualizer">
-      <div class="stack-layout">
-        <div class="stack-shell">
-          <div class="stack-top-rail">
-            <span class="stack-top-pill">Top</span>
-          </div>
+    <div class="stack-layout">
+      <div class="stack-shell">
+        <div class="stack-top-rail">
+          <span class="stack-top-pill">Top</span>
+        </div>
 
-          <div class="stack-chamber">
-            {#if activeStackItems.length === 0}
-              <div class="stack-empty-state">Empty stack</div>
-            {:else}
-              <div class="stack-column">
-                {#each activeStackItems as item, index (`live:${index}:${item.displayValue}:${item.state}`)}
+        <div class="stack-chamber">
+          {#if values.length === 0}
+            <div class="stack-empty-state">Empty stack</div>
+          {:else}
+            <div class="stack-column">
+              {#each values as item, index (`${index}:${item}`)}
+                <div
+                  class:stack-block-top={index === values.length - 1}
+                  class="stack-block"
+                  in:fly={{ y: -28, duration: 220, opacity: 0.18 }}
+                  out:fly={{ y: -28, duration: 180, opacity: 0 }}
+                  animate:flip={{ duration: 220 }}
+                >
+                  <span class="stack-block-value">{item}</span>
+                  {#if index === values.length - 1}
+                    <span class="stack-top-tag">Top</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="stack-pop-connector" aria-hidden="true">
+        <span class="stack-pop-arrow">-></span>
+        <span class="stack-pop-arrow-label">pop</span>
+      </div>
+
+      <div class="stack-pop-side">
+        <div class="stack-pop-head">
+          <span class="stack-pop-pill">{resolvedRemovedLabel}</span>
+        </div>
+        <div class="stack-pop-lane">
+          {#if recentlyRemoved.length > 0}
+            {#if latestRemovedItem}
+              <div class="stack-pop-primary">
+                <div
+                  class="stack-block stack-block-popped"
+                  in:fly={{ x: 18, duration: 220, opacity: 0.12 }}
+                  out:fly={{ x: 18, duration: 180, opacity: 0 }}
+                >
+                  <span class="stack-block-value">{latestRemovedItem}</span>
+                  <span class="stack-pop-tag">Removed</span>
+                </div>
+              </div>
+            {/if}
+
+            {#if olderRemovedItems.length > 0}
+              <div class="stack-pop-history">
+                <span class="stack-pop-history-label">Earlier removed</span>
+                {#each olderRemovedItems as item, index (`history:${index}:${item}`)}
                   <div
-                    class:stack-block-top={item.state === 'top'}
-                    class="stack-block"
-                    in:fly={{ y: -28, duration: 220, opacity: 0.18 }}
-                    out:fly={{ y: -28, duration: 180, opacity: 0 }}
+                    class="stack-block stack-block-popped stack-block-history"
+                    in:fly={{ x: 18, duration: 220, opacity: 0.12 }}
+                    out:fly={{ x: 18, duration: 180, opacity: 0 }}
                     animate:flip={{ duration: 220 }}
                   >
-                    <span class="stack-block-value">{item.displayValue}</span>
-                    {#if item.state === 'top'}
-                      <span class="stack-top-tag">Top</span>
-                    {/if}
+                    <span class="stack-block-value">{item}</span>
+                    <span class="stack-pop-tag">Removed</span>
                   </div>
                 {/each}
               </div>
             {/if}
-          </div>
-        </div>
-
-        <div class="stack-pop-connector" aria-hidden="true">
-          <span class="stack-pop-arrow">→</span>
-          <span class="stack-pop-arrow-label">pop</span>
-        </div>
-
-        <div class="stack-pop-side">
-          <div class="stack-pop-head">
-            <span class="stack-pop-pill">Popped</span>
-          </div>
-          <div class="stack-pop-lane">
-            {#if poppedStackItems.length > 0}
-              {#if latestPoppedItem}
-                <div class="stack-pop-primary">
-                  <div
-                    class="stack-block stack-block-popped"
-                    in:fly={{ x: 18, duration: 220, opacity: 0.12 }}
-                    out:fly={{ x: 18, duration: 180, opacity: 0 }}
-                  >
-                    <span class="stack-block-value">{latestPoppedItem}</span>
-                    <span class="stack-pop-tag">Popped</span>
-                  </div>
-                </div>
-              {/if}
-
-              {#if olderPoppedItems.length > 0}
-                <div class="stack-pop-history">
-                  <span class="stack-pop-history-label">Earlier popped</span>
-                  {#each olderPoppedItems as item, index (`history:${index}:${item}`)}
-                    <div
-                      class="stack-block stack-block-popped stack-block-history"
-                      in:fly={{ x: 18, duration: 220, opacity: 0.12 }}
-                      out:fly={{ x: 18, duration: 180, opacity: 0 }}
-                      animate:flip={{ duration: 220 }}
-                    >
-                      <span class="stack-block-value">{item}</span>
-                      <span class="stack-pop-tag">Popped</span>
-                    </div>
-                  {/each}
-                </div>
-              {/if}
-            {:else}
-              <div class="stack-pop-empty">No popped items yet</div>
-            {/if}
-          </div>
+          {:else}
+            <div class="stack-pop-empty">No removed items yet</div>
+          {/if}
         </div>
       </div>
     </div>
@@ -118,13 +107,6 @@
 </section>
 
 <style>
-  .stack-visualizer {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-
   .stack-layout {
     width: min(500px, 100%);
     display: grid;

@@ -21,15 +21,19 @@ import { registerRoutes } from './routes/index.ts';
 export function createApp(): ListenableAppLike {
   const app = express();
   const corsSettings = resolveCorsSettings();
+  const corsMiddleware = cors({
+    origin: corsSettings.origin,
+    credentials: corsSettings.credentials,
+    methods: corsSettings.methods,
+    allowedHeaders: corsSettings.allowedHeaders,
+    maxAge: corsSettings.maxAge,
+    optionsSuccessStatus: 204
+  });
 
   app.disable('x-powered-by');
   app.set('trust proxy', resolveTrustProxySetting());
-  app.use(
-    cors({
-      origin: corsSettings.origin,
-      credentials: corsSettings.credentials
-    })
-  );
+  app.use(corsMiddleware);
+  app.options('*', corsMiddleware);
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   app.use(securityHeadersMiddleware);
   app.use(httpsEnforcementMiddleware);
@@ -57,6 +61,13 @@ export function createApp(): ListenableAppLike {
       return res.status(413).json({
         error: 'Request body too large',
         message: `Request body exceeds the configured limit of ${JSON_BODY_LIMIT}.`
+      });
+    }
+
+    if (err instanceof Error && err.message.startsWith('CORS blocked for origin')) {
+      return res.status(403).json({
+        error: 'CORS blocked',
+        message: err.message
       });
     }
 

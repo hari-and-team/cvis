@@ -14,7 +14,7 @@
  * - Simplified type system
  */
 
-import { snapshotValue, MAX_TRACE_ARRAY_LENGTH } from './trace/runtime-snapshot.js';
+import { snapshotValue, MAX_TRACE_ARRAY_ALLOCATION_LENGTH } from './trace/runtime-snapshot.js';
 import { normalizeTraceError } from './trace/trace-errors.js';
 import { detectUnsupportedTraceFeature } from './trace/unsupported-syntax.js';
 
@@ -338,14 +338,27 @@ class Parser {
   }
 
   parseDeclaredBinding(typeName, name, line) {
-    if (this.match('OP', '[')) {
+    const dimensions = [];
+    while (this.match('OP', '[')) {
       const sizeExpr = this.peek().value !== ']' ? this.parseExpression() : null;
       this.expect('OP', ']');
+      dimensions.push(sizeExpr);
+    }
+
+    if (dimensions.length > 0) {
       let init = null;
       if (this.match('OP', '=')) {
         init = this.parseInitializer();
       }
-      return { type: 'ArrayDecl', varType: typeName, name, sizeExpr, init, line };
+      return {
+        type: 'ArrayDecl',
+        varType: typeName,
+        name,
+        dimensions,
+        sizeExpr: dimensions[0] ?? null,
+        init,
+        line
+      };
     }
 
     let init = null;
@@ -409,9 +422,12 @@ class Parser {
         let ptype = this.parseType();
         while (this.match('OP', '*')) ptype += '*';
         const pname = this.match('ID')?.value || '';
-        // Array param
-        if (this.match('OP', '[')) {
-          this.match('OP', ']');
+
+        while (this.match('OP', '[')) {
+          if (this.peek().value !== ']') {
+            this.parseExpression();
+          }
+          this.expect('OP', ']');
           ptype += '[]';
         }
         params.push({ type: ptype, name: pname });
@@ -517,53 +533,52 @@ class Parser {
     this.expect('OP', '(');
     const discriminant = this.parseExpression();
     this.expect('OP', ')');
-    const body = this.parseSwitchBody();
-    return { type: 'Switch', discriminant, clauses: body.clauses, line };
-  }
-
-  parseSwitchBody() {
     this.expect('OP', '{');
+
     const clauses = [];
-    let currentClause = null;
 
     while (this.peek().value !== '}' && this.peek().type !== 'EOF') {
-      const token = this.peek();
-
-      if (token.value === 'case') {
-        if (currentClause) {
-          clauses.push(currentClause);
-        }
-
-        const line = this.advance().line;
+      if (this.match('KW', 'case')) {
+        const caseLine = this.tokens[this.pos - 1].line;
         const test = this.parseExpression();
         this.expect('OP', ':');
-        currentClause = { type: 'SwitchClause', test, statements: [], line };
-        continue;
-      }
 
-      if (token.value === 'default') {
-        if (currentClause) {
-          clauses.push(currentClause);
+        const consequent = [];
+        while (
+          this.peek().type !== 'EOF' &&
+          this.peek().value !== '}' &&
+          !(this.peek().type === 'KW' && (this.peek().value === 'case' || this.peek().value === 'default'))
+        ) {
+          consequent.push(this.parseStatement());
         }
 
-        const line = this.advance().line;
-        this.expect('OP', ':');
-        currentClause = { type: 'SwitchClause', test: null, statements: [], line };
+        clauses.push({ type: 'SwitchCase', test, consequent, line: caseLine });
         continue;
       }
 
-      const statement = this.parseStatement();
-      if (currentClause) {
-        currentClause.statements.push(statement);
-      }
-    }
+      if (this.match('KW', 'default')) {
+        const defaultLine = this.tokens[this.pos - 1].line;
+        this.expect('OP', ':');
 
-    if (currentClause) {
-      clauses.push(currentClause);
+        const consequent = [];
+        while (
+          this.peek().type !== 'EOF' &&
+          this.peek().value !== '}' &&
+          !(this.peek().type === 'KW' && (this.peek().value === 'case' || this.peek().value === 'default'))
+        ) {
+          consequent.push(this.parseStatement());
+        }
+
+        clauses.push({ type: 'SwitchCase', test: null, consequent, line: defaultLine });
+        continue;
+      }
+
+      // Recover from malformed switch bodies by consuming the unexpected token.
+      this.advance();
     }
 
     this.expect('OP', '}');
-    return { clauses };
+    return { type: 'Switch', discriminant, clauses, line };
   }
 
   parseReturn() {
@@ -582,7 +597,7 @@ class Parser {
       const elements = [];
       if (this.peek().value !== '}') {
         do {
-          elements.push(this.parseExpression());
+          elements.push(this.parseInitializer());
         } while (this.match('OP', ','));
       }
       this.expect('OP', '}');
@@ -937,18 +952,10 @@ class Interpreter {
       return false;
     }
 
-    if (normalizedTarget.type === 'Identifier') {
-      this.setVar(normalizedTarget.name, value);
+    const reference = this.resolveLValue(normalizedTarget);
+    if (reference) {
+      reference.write(value);
       return true;
-    }
-
-    if (normalizedTarget.type === 'Index' && normalizedTarget.object?.type === 'Identifier') {
-      const arr = this.getVar(normalizedTarget.object.name);
-      const idx = this.evaluate(normalizedTarget.index);
-      if (Array.isArray(arr) && Number.isInteger(idx) && idx >= 0 && idx < arr.length) {
-        arr[idx] = value;
-        return true;
-      }
     }
 
     return false;
@@ -1097,23 +1104,129 @@ class Interpreter {
     return created;
   }
 
+  isTraceReference(value) {
+    return Boolean(value) && typeof value === 'object' && value.__traceRef === true;
+  }
+
+  resolveVariableOwner(name) {
+    for (let i = this.callStack.length - 1; i >= 0; i -= 1) {
+      if (name in this.callStack[i].locals) {
+        return this.callStack[i].locals;
+      }
+    }
+
+    if (name in this.globalVars) {
+      return this.globalVars;
+    }
+
+    return this.getCurrentLocals();
+  }
+
+  resolveLValue(node) {
+    if (!node) return null;
+
+    if (node.type === 'Identifier') {
+      const owner = this.resolveVariableOwner(node.name);
+      return {
+        read: () => owner[node.name] ?? 0,
+        write: (value) => {
+          owner[node.name] = value;
+        }
+      };
+    }
+
+    if (node.type === 'Index') {
+      let container = this.evaluate(node.object);
+      const idx = this.evaluate(node.index);
+      if (!Number.isInteger(idx) || idx < 0) {
+        return null;
+      }
+
+      if (!(Array.isArray(container) || (container && typeof container === 'object'))) {
+        const ownerReference = this.resolveLValue(node.object);
+        if (ownerReference) {
+          const created = [];
+          ownerReference.write(created);
+          container = created;
+        }
+      }
+
+      if (Array.isArray(container)) {
+        return {
+          read: () => container[idx] ?? 0,
+          write: (value) => {
+            container[idx] = value;
+          }
+        };
+      }
+
+      if (container && typeof container === 'object') {
+        return {
+          read: () => container[idx] ?? 0,
+          write: (value) => {
+            container[idx] = value;
+          }
+        };
+      }
+
+      return null;
+    }
+
+    if (node.type === 'Member' || node.type === 'PtrMember') {
+      const container = this.resolveMemberContainer(node);
+      if (!container) {
+        return null;
+      }
+
+      return {
+        read: () => container[node.member] ?? 0,
+        write: (value) => {
+          container[node.member] = value;
+        }
+      };
+    }
+
+    return null;
+  }
+
   resolveMemberContainer(target) {
     if (!target) return null;
 
     if (target.type === 'PtrMember') {
-      const address = this.evaluate(target.object);
-      return this.ensureHeapObject(address);
-    }
+      const pointer = this.evaluate(target.object);
+      if (this.isTraceReference(pointer)) {
+        const reference = pointer.reference;
+        if (!reference) {
+          return null;
+        }
 
-    if (target.type === 'Member') {
-      if (target.object?.type === 'Identifier') {
-        const current = this.getVar(target.object.name);
+        const current = reference.read();
         if (current && typeof current === 'object' && !Array.isArray(current)) {
           return current;
         }
 
         const created = {};
-        this.setVar(target.object.name, created);
+        reference.write(created);
+        return created;
+      }
+
+      if (pointer && typeof pointer === 'object' && !Array.isArray(pointer)) {
+        return pointer;
+      }
+
+      return this.ensureHeapObject(pointer);
+    }
+
+    if (target.type === 'Member') {
+      const reference = this.resolveLValue(target.object);
+      if (reference) {
+        const current = reference.read();
+        if (current && typeof current === 'object' && !Array.isArray(current)) {
+          return current;
+        }
+
+        const created = {};
+        reference.write(created);
         return created;
       }
 
@@ -1205,28 +1318,23 @@ class Interpreter {
       }
 
       case 'Switch': {
-        this.recordStep(node.line, `switch expression`);
+        this.recordStep(node.line, `switch condition`);
         const discriminant = this.evaluate(node.discriminant);
-        let startIndex = -1;
-        let defaultIndex = -1;
 
+        let startIndex = -1;
         for (let i = 0; i < node.clauses.length; i += 1) {
-          const clause = node.clauses[i];
-          if (clause.test === null) {
-            if (defaultIndex === -1) {
-              defaultIndex = i;
+          const switchCase = node.clauses[i];
+          if (switchCase.test === null) {
+            if (startIndex === -1) {
+              startIndex = i;
             }
             continue;
           }
 
-          if (this.evaluate(clause.test) === discriminant) {
+          if (this.evaluate(switchCase.test) === discriminant) {
             startIndex = i;
             break;
           }
-        }
-
-        if (startIndex === -1) {
-          startIndex = defaultIndex;
         }
 
         if (startIndex === -1) {
@@ -1234,14 +1342,11 @@ class Interpreter {
         }
 
         for (let i = startIndex; i < node.clauses.length; i += 1) {
-          const clause = node.clauses[i];
-          this.recordStep(
-            clause.line ?? node.line,
-            clause.test === null ? 'default case' : 'case match'
-          );
+          const switchCase = node.clauses[i];
+          this.recordStep(switchCase.line, switchCase.test === null ? 'default case' : 'case match');
 
-          for (const statement of clause.statements) {
-            this.execute(statement);
+          for (const stmt of switchCase.consequent) {
+            this.execute(stmt);
             if (this.breakFlag || this.continueFlag || this.returnValue !== null) {
               break;
             }
@@ -1306,28 +1411,88 @@ class Interpreter {
     }
   }
 
+  resolveArrayDimensions(node) {
+    const rawDimensions =
+      Array.isArray(node.dimensions) && node.dimensions.length > 0
+        ? node.dimensions
+        : [node.sizeExpr ?? null];
+
+    return rawDimensions.map((expr, index) => {
+      if (expr) {
+        return Math.max(0, Math.trunc(this.evaluate(expr)));
+      }
+
+      if (index === 0 && node.init?.elements) {
+        return node.init.elements.length;
+      }
+
+      return 0;
+    });
+  }
+
+  countArraySlots(dimensions) {
+    if (!Array.isArray(dimensions) || dimensions.length === 0) {
+      return 0;
+    }
+
+    return dimensions.reduce((total, size) => total * Math.max(0, size), 1);
+  }
+
+  createNestedArray(dimensions, depth = 0) {
+    const size = dimensions[depth] ?? 0;
+    const arr = new Array(size).fill(0);
+
+    if (depth < dimensions.length - 1) {
+      for (let i = 0; i < size; i += 1) {
+        arr[i] = this.createNestedArray(dimensions, depth + 1);
+      }
+    }
+
+    return arr;
+  }
+
+  applyArrayInitializer(target, initNode) {
+    if (!Array.isArray(target) || !initNode?.elements) {
+      return;
+    }
+
+    for (let i = 0; i < initNode.elements.length && i < target.length; i += 1) {
+      const element = initNode.elements[i];
+      if (element?.type === 'ArrayInit' && Array.isArray(target[i])) {
+        this.applyArrayInitializer(target[i], element);
+        continue;
+      }
+
+      if (Array.isArray(target[i])) {
+        continue;
+      }
+
+      target[i] = this.evaluate(element);
+    }
+  }
+
   executeArrayDecl(node, shouldRecord = true) {
     if (shouldRecord) {
       this.recordStep(node.line, `Array declaration: ${node.name}`);
     }
 
-    const declaredSize = node.sizeExpr
-      ? Math.max(0, Math.trunc(this.evaluate(node.sizeExpr)))
-      : Number.isFinite(node.size)
-        ? Math.max(0, Math.trunc(node.size))
-        : 0;
-    const size = declaredSize || (node.init?.elements?.length || 0);
-    if (size > MAX_TRACE_ARRAY_LENGTH) {
+    const dimensions = this.resolveArrayDimensions(node);
+    const totalSize = this.countArraySlots(dimensions);
+    if (totalSize > MAX_TRACE_ARRAY_ALLOCATION_LENGTH) {
       throw new Error(
-        `Trace array limit exceeded (${size}). The trace engine supports arrays up to ${MAX_TRACE_ARRAY_LENGTH} elements. Use compile/run for larger inputs.`
+        `Trace array limit exceeded (${totalSize}). The trace engine supports arrays up to ${MAX_TRACE_ARRAY_ALLOCATION_LENGTH} elements. Use compile/run for larger inputs.`
       );
     }
-    const arr = new Array(size).fill(0);
+
+    const arr =
+      dimensions.length > 1
+        ? this.createNestedArray(dimensions)
+        : new Array(dimensions[0] || 0).fill(0);
+
     if (node.init?.elements) {
-      for (let i = 0; i < node.init.elements.length && i < size; i++) {
-        arr[i] = this.evaluate(node.init.elements[i]);
-      }
+      this.applyArrayInitializer(arr, node.init);
     }
+
     this.setVar(node.name, arr);
   }
 
@@ -1373,23 +1538,42 @@ class Interpreter {
 
       case 'Unary': {
         if (node.op === '++pre' || node.op === '--pre') {
-          const name = node.operand.name;
-          const val = this.getVar(name) + (node.op === '++pre' ? 1 : -1);
-          this.setVar(name, val);
+          const reference = this.resolveLValue(node.operand);
+          if (!reference) return 0;
+          const current = reference.read();
+          const val = current + (node.op === '++pre' ? 1 : -1);
+          reference.write(val);
           return val;
         }
         if (node.op === '++post' || node.op === '--post') {
-          const name = node.operand.name;
-          const val = this.getVar(name);
-          this.setVar(name, val + (node.op === '++post' ? 1 : -1));
+          const reference = this.resolveLValue(node.operand);
+          if (!reference) return 0;
+          const val = reference.read();
+          reference.write(val + (node.op === '++post' ? 1 : -1));
           return val;
         }
         const operand = this.evaluate(node.operand);
         switch (node.op) {
           case '-': return -operand;
           case '!': return operand ? 0 : 1;
-          case '&': return this.nextHeapAddr++; // Simplified address-of
-          case '*': return this.heap.get(operand) || 0; // Simplified dereference
+          case '&':
+            if (
+              node.operand?.type === 'Identifier' ||
+              node.operand?.type === 'Index' ||
+              node.operand?.type === 'Member' ||
+              node.operand?.type === 'PtrMember'
+            ) {
+              const reference = this.resolveLValue(node.operand);
+              if (reference) {
+                return { __traceRef: true, reference };
+              }
+            }
+            return this.nextHeapAddr++;
+          case '*':
+            if (this.isTraceReference(operand)) {
+              return operand.reference?.read() ?? 0;
+            }
+            return this.heap.get(operand) || 0; // Simplified dereference
           default: return operand;
         }
       }
@@ -1399,11 +1583,11 @@ class Interpreter {
 
       case 'Assignment': {
         const right = this.evaluate(node.right);
-        if (node.left.type === 'Identifier') {
-          const name = node.left.name;
+        const reference = this.resolveLValue(node.left);
+        if (reference) {
           let val = right;
           if (node.op !== '=') {
-            const left = this.getVar(name);
+            const left = reference.read();
             switch (node.op) {
               case '+=': val = left + right; break;
               case '-=': val = left - right; break;
@@ -1412,31 +1596,19 @@ class Interpreter {
               case '%=': val = right === 0 ? left : left % right; break;
             }
           }
-          this.setVar(name, val);
+          reference.write(val);
           return val;
-        }
-        if (node.left.type === 'Index') {
-          const arr = this.getVar(node.left.object.name);
-          const idx = this.evaluate(node.left.index);
-          if (Array.isArray(arr)) {
-            arr[idx] = right;
-          }
-          return right;
-        }
-        if (node.left.type === 'Member' || node.left.type === 'PtrMember') {
-          const container = this.resolveMemberContainer(node.left);
-          if (container) {
-            container[node.left.member] = right;
-          }
-          return right;
         }
         return right;
       }
 
       case 'Index': {
-        const arr = this.getVar(node.object.name);
+        const arr = this.evaluate(node.object);
         const idx = this.evaluate(node.index);
         if (Array.isArray(arr)) {
+          return arr[idx] ?? 0;
+        }
+        if (arr && typeof arr === 'object') {
           return arr[idx] ?? 0;
         }
         return 0;

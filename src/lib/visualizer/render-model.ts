@@ -32,9 +32,42 @@ export interface VisualizerFlowDescriptor {
   text: string;
 }
 
-export interface VisualizerLinearItemView {
+export type VisualizerArrayCellEmphasis = 'default' | 'search' | 'delete' | 'changed';
+
+export interface VisualizerArrayCellView {
+  idx: number;
   displayValue: string;
-  state: 'active' | 'top' | 'popped';
+  changed: boolean;
+  emphasis: VisualizerArrayCellEmphasis;
+}
+
+export interface VisualizerMatrixCellView {
+  row: number;
+  col: number;
+  displayValue: string;
+  changed: boolean;
+  emphasis: VisualizerArrayCellEmphasis;
+}
+
+export interface VisualizerMatrixRowView {
+  row: number;
+  cells: VisualizerMatrixCellView[];
+}
+
+export interface VisualizerMatrixView {
+  rowCount: number;
+  colCount: number;
+  visibleRowCount: number;
+  visibleColCount: number;
+  rows: VisualizerMatrixRowView[];
+}
+
+export interface VisualizerArrayView {
+  name: string;
+  cellCount: number;
+  values: VisualizerArrayCellView[];
+  recentDeletedValues: string[];
+  matrix: VisualizerMatrixView | null;
 }
 
 export interface VisualizerRenderModel {
@@ -44,14 +77,16 @@ export interface VisualizerRenderModel {
   flowDescriptor: VisualizerFlowDescriptor | null;
   stackFrames: VisualizerFrameView[];
   globalValues: VisualizerValueView[];
-  arrays: Array<{ name: string; values: Array<{ idx: number; displayValue: string }> }>;
+  arrays: VisualizerArrayView[];
   linkedLists: VisualizerLinkedList[];
   structBlocks: VisualizerStructBlock[];
   pointerRefs: VisualizerPointerRef[];
   trees: VisualizerTree[];
-  stackItems: VisualizerLinearItemView[];
-  poppedStackItems: string[];
+  stackItems: string[];
+  stackSideLabel: string | null;
+  recentlyPoppedStackValues: string[];
   queueItems: string[];
+  recentlyDeletedTreeValues: string[];
   graphs: VisualizerGraph[];
   memoryEntries: VisualizerMemoryEntry[];
   rawGlobalFrame: VisualizerFrame | null;
@@ -74,6 +109,36 @@ function formatValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function toIndexedEntries(value: unknown): Array<[number, unknown]> {
+  if (Array.isArray(value)) {
+    return value.map((entry, index): [number, unknown] => [index, entry]);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  return Object.entries(value)
+    .filter(([key]) => /^\d+$/.test(key))
+    .map(([key, entry]): [number, unknown] => [Number.parseInt(key, 10), entry])
+    .sort((left, right) => left[0] - right[0]);
+}
+
+function arraySourceAliases(name: string): string[] {
+  const aliases = [name];
+  const baseName = name.split('.').at(-1)?.trim();
+
+  if (baseName && baseName !== name) {
+    aliases.push(baseName);
+  }
+
+  return aliases;
+}
+
+function displayArrayName(name: string): string {
+  return name.split('.').at(-1)?.trim() || name;
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
@@ -154,48 +219,375 @@ function formatTechniqueLabel(tag: string): string {
     .join(' ');
 }
 
-function buildStackItems(currentValues: unknown[]): VisualizerLinearItemView[] {
-  const formattedCurrent = currentValues.map((item) => formatValue(item));
-  const topIndex = formattedCurrent.length - 1;
+function getLineText(source: string, lineNo: number | undefined): string {
+  if (!source || !Number.isInteger(lineNo) || (lineNo ?? 0) <= 0) {
+    return '';
+  }
 
-  return formattedCurrent.map((displayValue, index) => ({
-    displayValue,
-    state: index === topIndex ? 'top' : 'active'
-  }));
+  return source.split(/\r?\n/)[(lineNo ?? 1) - 1] ?? '';
 }
 
-function buildPoppedStackHistory(traceHistory: TraceStep[]): string[] {
-  const poppedHistory: string[] = [];
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
-  for (let index = 1; index < traceHistory.length; index += 1) {
-    const previousValues = normalizeTraceStep(traceHistory[index - 1]).stack.values.map((item) =>
-      formatValue(item)
-    );
-    const currentValues = normalizeTraceStep(traceHistory[index]).stack.values.map((item) =>
-      formatValue(item)
-    );
-    const isPrefixPop =
-      previousValues.length > currentValues.length &&
-      currentValues.every((item, currentIndex) => item === previousValues[currentIndex]);
+function buildNumericScope(
+  globalFrame: VisualizerFrame | null,
+  stackFrames: VisualizerFrame[]
+): Record<string, number> {
+  const scope: Record<string, number> = {};
 
-    if (!isPrefixPop) {
-      continue;
-    }
-
-    const poppedOnThisStep = previousValues.slice(currentValues.length).reverse();
-    for (const poppedValue of poppedOnThisStep) {
-      poppedHistory.unshift(poppedValue);
+  for (const [name, value] of Object.entries(globalFrame?.locals ?? {})) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      scope[name] = value;
     }
   }
 
-  return poppedHistory;
+  for (const frame of stackFrames) {
+    for (const [name, value] of Object.entries(frame.locals)) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        scope[name] = value;
+      }
+    }
+  }
+
+  return scope;
+}
+
+function evaluateIndexExpression(
+  expression: string,
+  numericScope: Record<string, number>
+): number | null {
+  const trimmed = expression.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const substituted = trimmed.replace(/\b[A-Za-z_]\w*\b/g, (name) =>
+    name in numericScope ? String(numericScope[name]) : 'NaN'
+  );
+
+  if (!/^[\d\s+\-*/%()NaInityf.]+$/.test(substituted)) {
+    return null;
+  }
+
+  try {
+    const result = Function(`"use strict"; return (${substituted});`)();
+    if (typeof result === 'number' && Number.isFinite(result)) {
+      return Math.trunc(result);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function findArrayAccessIndices(
+  arrayNames: string[],
+  lineText: string,
+  numericScope: Record<string, number>
+): Map<string, Set<number>> {
+  const result = new Map<string, Set<number>>();
+
+  for (const arrayName of arrayNames) {
+    for (const alias of arraySourceAliases(arrayName)) {
+      const regex = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\[([^\\]]+)\\]`, 'g');
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(lineText)) !== null) {
+        const resolvedIndex = evaluateIndexExpression(match[1] ?? '', numericScope);
+        if (resolvedIndex === null || !Number.isInteger(resolvedIndex) || resolvedIndex < 0) {
+          continue;
+        }
+
+        if (!result.has(arrayName)) {
+          result.set(arrayName, new Set<number>());
+        }
+        result.get(arrayName)?.add(resolvedIndex);
+      }
+    }
+  }
+
+  return result;
+}
+
+function findMatrixAccessCoordinates(
+  arrayNames: string[],
+  lineText: string,
+  numericScope: Record<string, number>
+): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>();
+
+  for (const arrayName of arrayNames) {
+    for (const alias of arraySourceAliases(arrayName)) {
+      const regex = new RegExp(
+        `\\b${escapeRegExp(alias)}\\s*\\[([^\\]]+)\\]\\s*\\[([^\\]]+)\\]`,
+        'g'
+      );
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(lineText)) !== null) {
+        const resolvedRow = evaluateIndexExpression(match[1] ?? '', numericScope);
+        const resolvedCol = evaluateIndexExpression(match[2] ?? '', numericScope);
+        if (
+          resolvedRow === null ||
+          resolvedCol === null ||
+          !Number.isInteger(resolvedRow) ||
+          !Number.isInteger(resolvedCol) ||
+          resolvedRow < 0 ||
+          resolvedCol < 0
+        ) {
+          continue;
+        }
+
+        if (!result.has(arrayName)) {
+          result.set(arrayName, new Set<string>());
+        }
+        result.get(arrayName)?.add(`${resolvedRow}:${resolvedCol}`);
+      }
+    }
+  }
+
+  return result;
+}
+
+function inferArrayOperation(
+  lineText: string,
+  activeFrameName: string,
+  intentLabel: string
+): 'search' | 'delete' | 'neutral' {
+  const combined = `${activeFrameName} ${lineText}`.toLowerCase();
+
+  if (/\b(delete|remove|erase|shift|pop)\b/.test(combined)) {
+    return 'delete';
+  }
+
+  if (/\b(search|find|lookup)\b/.test(combined)) {
+    return 'search';
+  }
+
+  if (/\[[^\]]+\]\s*(?:==|!=|<=|>=|<|>)/.test(lineText) || intentLabel === 'Searching') {
+    return 'search';
+  }
+
+  return 'neutral';
+}
+
+function buildValueCounts(values: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+function diffRemovedValues(previousValues: string[], currentValues: string[]): string[] {
+  const remaining = buildValueCounts(currentValues);
+  const removed: string[] = [];
+
+  for (const value of previousValues) {
+    const count = remaining.get(value) ?? 0;
+    if (count > 0) {
+      remaining.set(value, count - 1);
+      continue;
+    }
+
+    removed.push(value);
+  }
+
+  return removed;
+}
+
+function findRecentlyPoppedValues(previousValues: unknown[], currentValues: unknown[]): string[] {
+  if (previousValues.length <= currentValues.length) {
+    return [];
+  }
+
+  const sharedPrefix = currentValues.every((value, index) => valuesEqual(value, previousValues[index]));
+  if (sharedPrefix) {
+    return previousValues
+      .slice(currentValues.length)
+      .reverse()
+      .map((value) => formatValue(value));
+  }
+
+  return diffRemovedValues(
+    previousValues.map((value) => formatValue(value)),
+    currentValues.map((value) => formatValue(value))
+  );
+}
+
+function inferVisibleMatrixSize(
+  arrayName: string,
+  numericScope: Record<string, number>,
+  rowCount: number,
+  colCount: number
+): { rows: number; cols: number } {
+  const normalizedName = displayArrayName(arrayName).toLowerCase();
+  const scopeEntries = Object.entries(numericScope).map(([key, value]) => [key.toLowerCase(), value] as const);
+  const normalizedScope = new Map<string, number>(scopeEntries);
+  const rowHintKeys = [
+    `${normalizedName}rows`,
+    `${normalizedName}_rows`,
+    'rows',
+    'row_count',
+    'rowcount',
+    'height'
+  ];
+  const colHintKeys = [
+    `${normalizedName}cols`,
+    `${normalizedName}_cols`,
+    'cols',
+    'col_count',
+    'colcount',
+    'width'
+  ];
+
+  const resolveHint = (keys: string[], max: number): number | null => {
+    for (const key of keys) {
+      if (!normalizedScope.has(key)) {
+        continue;
+      }
+
+      const value = normalizedScope.get(key);
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+        return Math.min(max, value);
+      }
+    }
+
+    return null;
+  };
+
+  return {
+    rows: resolveHint(rowHintKeys, rowCount) ?? rowCount,
+    cols: resolveHint(colHintKeys, colCount) ?? colCount
+  };
+}
+
+function buildMatrixView(
+  entry: VisualizerArray,
+  previousArray: VisualizerArray | undefined,
+  numericScope: Record<string, number>,
+  accessedCoordinates: Set<string>,
+  arrayOperation: 'search' | 'delete' | 'neutral'
+): VisualizerMatrixView | null {
+  const rowEntries = entry.cells
+    .map((cell) => [cell.idx, toIndexedEntries(cell.value)] as const)
+    .filter(([, values]) => values.length > 0);
+
+  if (rowEntries.length === 0 || rowEntries.length !== entry.cells.length) {
+    return null;
+  }
+
+  const colCount = rowEntries.reduce((max, [, values]) => Math.max(max, values.length), 0);
+  if (colCount === 0) {
+    return null;
+  }
+
+  const previousRowMap = new Map<number, Map<number, unknown>>();
+  for (const previousCell of previousArray?.cells ?? []) {
+    const nestedValues = toIndexedEntries(previousCell.value);
+    if (nestedValues.length === 0) {
+      continue;
+    }
+    previousRowMap.set(previousCell.idx, new Map<number, unknown>(nestedValues));
+  }
+
+  const { rows: visibleRowCount, cols: visibleColCount } = inferVisibleMatrixSize(
+    entry.name,
+    numericScope,
+    rowEntries.length,
+    colCount
+  );
+
+  return {
+    rowCount: rowEntries.length,
+    colCount,
+    visibleRowCount,
+    visibleColCount,
+    rows: rowEntries.slice(0, visibleRowCount).map(([rowIndex, values]) => ({
+      row: rowIndex,
+      cells: values.slice(0, visibleColCount).map(([colIndex, value]) => {
+        const changed = !valuesEqual(previousRowMap.get(rowIndex)?.get(colIndex), value);
+        const coordinateKey = `${rowIndex}:${colIndex}`;
+        let emphasis: VisualizerArrayCellEmphasis = 'default';
+
+        if (arrayOperation === 'delete' && changed) {
+          emphasis = 'delete';
+        } else if (accessedCoordinates.has(coordinateKey)) {
+          emphasis = 'search';
+        } else if (changed) {
+          emphasis = 'changed';
+        }
+
+        return {
+          row: rowIndex,
+          col: colIndex,
+          displayValue: formatValue(value),
+          changed,
+          emphasis
+        };
+      })
+    }))
+  };
+}
+
+function findActivePopTargets(
+  lineText: string,
+  activeFrameName: string,
+  description: string | undefined,
+  currentStackValues: unknown[]
+): string[] {
+  if (currentStackValues.length === 0) {
+    return [];
+  }
+
+  const combined = `${activeFrameName} ${lineText} ${description ?? ''}`.toLowerCase();
+  const looksLikePopContext =
+    /\bpop\b/.test(combined) ||
+    /\bpopped\b/.test(combined) ||
+    /top\s*--|--\s*top/.test(lineText) ||
+    /stack\s*\[\s*top\s*\]/.test(lineText);
+
+  if (!looksLikePopContext) {
+    return [];
+  }
+
+  return [formatValue(currentStackValues[currentStackValues.length - 1])];
+}
+
+function findRecentlyDeletedTreeValues(
+  previousTrees: VisualizerTree[],
+  currentTrees: VisualizerTree[]
+): string[] {
+  const currentKeys = new Set(
+    currentTrees.flatMap((tree) =>
+      tree.levels.flatMap((level) => level.filter(Boolean).map((node) => node?.key ?? ''))
+    )
+  );
+
+  const removed: string[] = [];
+  for (const tree of previousTrees) {
+    for (const level of tree.levels) {
+      for (const node of level) {
+        if (!node || currentKeys.has(node.key)) {
+          continue;
+        }
+        removed.push(node.label);
+      }
+    }
+  }
+
+  return removed;
 }
 
 export function buildVisualizerRenderModel(
   traceStep: TraceStep | null,
   previousTraceStep: TraceStep | null,
-  editorCode: string,
-  traceHistory: TraceStep[] = []
+  editorCode: string
 ): VisualizerRenderModel {
   const normalizedTrace = normalizeTraceStep(traceStep);
   const previousNormalizedTrace = normalizeTraceStep(previousTraceStep);
@@ -203,6 +595,20 @@ export function buildVisualizerRenderModel(
   const structBlocks = normalizedTrace.structBlocks;
   const previousFrames = previousNormalizedTrace.stackFrames;
   const previousGlobalFrame = previousNormalizedTrace.globalFrame;
+  const lineText = getLineText(editorCode, traceStep?.lineNo);
+  const activeFrameName = normalizedTrace.stackFrames.at(-1)?.name ?? '';
+  const numericScope = buildNumericScope(normalizedTrace.globalFrame, normalizedTrace.stackFrames);
+  const arrayAccessIndices = findArrayAccessIndices(
+    normalizedTrace.arrays.map((entry) => entry.name),
+    lineText,
+    numericScope
+  );
+  const matrixAccessCoordinates = findMatrixAccessCoordinates(
+    normalizedTrace.arrays.map((entry) => entry.name),
+    lineText,
+    numericScope
+  );
+  const arrayOperation = inferArrayOperation(lineText, activeFrameName, intentPrediction.primaryLabel);
 
   const stackFrames = normalizedTrace.stackFrames.map((frame, index, frames) => {
     const previousFrame = previousFrames[index] ?? null;
@@ -230,17 +636,76 @@ export function buildVisualizerRenderModel(
       }))
     : [];
 
-  const arrays = normalizedTrace.arrays.map((entry) => ({
-    name: entry.name,
-    values: entry.cells.map((cell) => ({
-      idx: cell.idx,
-      displayValue: formatValue(cell.value)
-    }))
-  }));
+  const previousArrayMap = new Map(previousNormalizedTrace.arrays.map((entry) => [entry.name, entry]));
+  const arrays = normalizedTrace.arrays.map((entry) => {
+    const previousArray = previousArrayMap.get(entry.name);
+    const previousCellMap = new Map(previousArray?.cells.map((cell) => [cell.idx, cell.value]) ?? []);
+    const accessedIndices = arrayAccessIndices.get(entry.name) ?? new Set<number>();
+    const accessedCoordinates = matrixAccessCoordinates.get(entry.name) ?? new Set<string>();
+    const previousValues = previousArray?.cells.map((cell) => formatValue(cell.value)) ?? [];
+    const currentValues = entry.cells.map((cell) => formatValue(cell.value));
+    const matrix = buildMatrixView(
+      entry,
+      previousArray,
+      numericScope,
+      accessedCoordinates,
+      arrayOperation
+    );
+    const cellCount = matrix
+      ? matrix.visibleRowCount * matrix.visibleColCount
+      : entry.cells.length;
 
-  const stackItems = buildStackItems(normalizedTrace.stack.values);
-  const poppedStackItems = buildPoppedStackHistory(traceHistory);
+    return {
+      name: displayArrayName(entry.name),
+      cellCount,
+      values: entry.cells.map((cell) => {
+        const changed = !valuesEqual(previousCellMap.get(cell.idx), cell.value);
+        let emphasis: VisualizerArrayCellEmphasis = 'default';
+
+        if (arrayOperation === 'delete' && changed) {
+          emphasis = 'delete';
+        } else if (accessedIndices.has(cell.idx)) {
+          emphasis = 'search';
+        } else if (changed) {
+          emphasis = 'changed';
+        }
+
+        return {
+          idx: cell.idx,
+          displayValue: formatValue(cell.value),
+          changed,
+          emphasis
+        };
+      }),
+      recentDeletedValues: arrayOperation === 'delete' ? diffRemovedValues(previousValues, currentValues) : [],
+      matrix
+    };
+  });
+
+  const stackItems = normalizedTrace.stack.values.map((item) => formatValue(item));
+  const activePopTargets = findActivePopTargets(
+    lineText,
+    activeFrameName,
+    traceStep?.description,
+    normalizedTrace.stack.values
+  );
+  const recentlyPoppedStackValues = findRecentlyPoppedValues(
+    previousNormalizedTrace.stack.values,
+    normalizedTrace.stack.values
+  );
+  const stackSideValues =
+    activePopTargets.length > 0 ? activePopTargets : recentlyPoppedStackValues;
+  const stackSideLabel =
+    activePopTargets.length > 0
+      ? 'Popping now'
+      : recentlyPoppedStackValues.length > 0
+        ? 'Popped values'
+        : null;
   const queueItems = normalizedTrace.queue.values.map((item) => formatValue(item));
+  const recentlyDeletedTreeValues = findRecentlyDeletedTreeValues(
+    previousNormalizedTrace.trees,
+    normalizedTrace.trees
+  );
 
   const hasStructureViews =
     arrays.length > 0 ||
@@ -248,7 +713,6 @@ export function buildVisualizerRenderModel(
     structBlocks.length > 0 ||
     normalizedTrace.trees.length > 0 ||
     stackItems.length > 0 ||
-    poppedStackItems.length > 0 ||
     queueItems.length > 0 ||
     normalizedTrace.graphs.length > 0;
   const hasRenderableSections =
@@ -259,7 +723,6 @@ export function buildVisualizerRenderModel(
     structBlocks.length > 0 ||
     normalizedTrace.trees.length > 0 ||
     stackItems.length > 0 ||
-    poppedStackItems.length > 0 ||
     queueItems.length > 0 ||
     normalizedTrace.graphs.length > 0;
 
@@ -276,8 +739,10 @@ export function buildVisualizerRenderModel(
     pointerRefs: normalizedTrace.pointerRefs,
     trees: normalizedTrace.trees,
     stackItems,
-    poppedStackItems,
+    stackSideLabel,
+    recentlyPoppedStackValues: stackSideValues,
     queueItems,
+    recentlyDeletedTreeValues,
     graphs: normalizedTrace.graphs,
     memoryEntries: normalizedTrace.memoryEntries,
     rawGlobalFrame: normalizedTrace.globalFrame,

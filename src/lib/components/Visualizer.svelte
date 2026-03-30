@@ -18,14 +18,7 @@
   export let traceStep: TraceStep | null = null;
   $: previousTraceStep =
     $currentStepIndex > 0 ? $traceSteps[$currentStepIndex - 1] ?? null : null;
-  $: traceHistory =
-    traceStep && $currentStepIndex >= 0 ? $traceSteps.slice(0, $currentStepIndex + 1) : [];
-  $: renderModel = buildVisualizerRenderModel(
-    traceStep,
-    previousTraceStep,
-    $editorCode,
-    traceHistory
-  );
+  $: renderModel = buildVisualizerRenderModel(traceStep, previousTraceStep, $editorCode);
 
   let playInterval: number | null = null;
   let scrollRef: HTMLDivElement | null = null;
@@ -200,11 +193,12 @@
         <PointerMapView pointerRefs={renderModel.pointerRefs} />
       {/if}
 
-      {#if renderModel.stackItems.length > 0 || renderModel.poppedStackItems.length > 0}
+      {#if renderModel.stackItems.length > 0 || renderModel.recentlyPoppedStackValues.length > 0}
         <LinearStructureView
           label="Stack"
-          stackItems={renderModel.stackItems}
-          poppedItems={renderModel.poppedStackItems}
+          values={renderModel.stackItems}
+          removedLabel={renderModel.stackSideLabel}
+          recentlyRemoved={renderModel.recentlyPoppedStackValues}
         />
       {/if}
 
@@ -212,8 +206,8 @@
         <LinearStructureView label="Queue" values={renderModel.queueItems} />
       {/if}
 
-      {#if renderModel.trees.length > 0}
-        <TreeView trees={renderModel.trees} />
+      {#if renderModel.trees.length > 0 || renderModel.recentlyDeletedTreeValues.length > 0}
+        <TreeView trees={renderModel.trees} recentlyDeleted={renderModel.recentlyDeletedTreeValues} />
       {/if}
 
       {#if renderModel.graphs.length > 0}

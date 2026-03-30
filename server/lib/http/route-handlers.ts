@@ -1,5 +1,6 @@
 import { getGccHealthDetails } from '../gcc-path.js';
 import { compileC } from '../compile-c.js';
+import { executeSource } from '../execute-source.js';
 import { runBinary } from '../run-binary.js';
 import {
   closeRunInput,
@@ -10,6 +11,7 @@ import {
 } from '../run-session.js';
 import { traceExecution } from '../c-interpreter.js';
 import { analyzeProgramIntent } from '../program-intent-ml.js';
+import { runtimeCapabilities, supportsInteractiveRunSessions } from '../runtime-capabilities.js';
 import type { RequestLike, ResponseLike } from './http-types.ts';
 import {
   getErrorMessage,
@@ -38,13 +40,19 @@ function queryStringValue(value: unknown): string {
 
 export async function healthHandler(req: RequestLike, res: ResponseLike) {
   const gcc = await getGccHealthDetails();
+  const capabilities = runtimeCapabilities();
+  const environment = process.env.VERCEL ? 'vercel' : process.env.DOCKER_ENV ? 'docker' : 'local';
   return res.json({
     status: 'ok',
     ...gcc,
+    capabilities: {
+      ...capabilities,
+      nativeCompilationAvailable: Boolean(gcc.gccVersion)
+    },
     requestProtocol: req.protocol ?? (req.secure ? 'https' : 'http'),
     httpsConfigured: Boolean(process.env.TLS_KEY_FILE && process.env.TLS_CERT_FILE),
     httpsRequired: process.env.REQUIRE_HTTPS === 'true',
-    environment: process.env.DOCKER_ENV ? 'docker' : 'local',
+    environment,
     timestamp: new Date().toISOString()
   });
 }
@@ -80,6 +88,37 @@ export async function compileHandler(req: RequestLike, res: ResponseLike) {
   } catch (err) {
     console.error('Compilation error:', err);
     return res.status(500).json(compileServerErrorResponse(getErrorMessage(err)));
+  }
+}
+
+export async function executeHandler(req: RequestLike, res: ResponseLike) {
+  const bodyResult = normalizeJsonBody(req.body);
+  if ('error' in bodyResult) {
+    return res.status(400).json(runValidationResponse(bodyResult.error));
+  }
+
+  const { code, args, input } = bodyResult.value;
+  const codeError = validateCode(code);
+  if (codeError) {
+    return res.status(400).json(runValidationResponse(codeError, 'No code provided'));
+  }
+
+  const argsResult = normalizeArgs(args);
+  if ('error' in argsResult) {
+    return res.status(400).json(runValidationResponse(argsResult.error, 'Invalid args'));
+  }
+
+  const inputResult = normalizeInput(input);
+  if ('error' in inputResult) {
+    return res.status(400).json(runValidationResponse(inputResult.error, 'Invalid input'));
+  }
+
+  try {
+    const result = await executeSource(code as string, argsResult.value, inputResult.value);
+    return res.json(result);
+  } catch (err) {
+    console.error('Execute error:', err);
+    return res.status(500).json(runServerErrorResponse(getErrorMessage(err)));
   }
 }
 
@@ -127,6 +166,14 @@ export async function runHandler(req: RequestLike, res: ResponseLike) {
 }
 
 export async function runStartHandler(req: RequestLike, res: ResponseLike) {
+  if (!supportsInteractiveRunSessions()) {
+    return res.status(501).json({
+      success: false,
+      error:
+        'Interactive run sessions are disabled in this serverless deployment. Set PUBLIC_EXECUTION_MODE=serverless on the frontend to use stateless runs, or deploy the backend on a stateful Node host for live stdin.'
+    });
+  }
+
   const bodyResult = normalizeJsonBody(req.body);
   if ('error' in bodyResult) {
     return res.status(400).json({ success: false, error: bodyResult.error });
@@ -156,6 +203,13 @@ export async function runStartHandler(req: RequestLike, res: ResponseLike) {
 }
 
 export function runPollHandler(req: RequestLike, res: ResponseLike) {
+  if (!supportsInteractiveRunSessions()) {
+    return res.status(501).json({
+      success: false,
+      error: 'Interactive run sessions are disabled in this serverless deployment.'
+    });
+  }
+
   const sessionId = queryStringValue(req.query?.sessionId);
   if (!sessionId) {
     return res.status(400).json({ success: false, error: 'sessionId query parameter is required' });
@@ -187,6 +241,13 @@ export function runPollHandler(req: RequestLike, res: ResponseLike) {
 }
 
 export function runInputHandler(req: RequestLike, res: ResponseLike) {
+  if (!supportsInteractiveRunSessions()) {
+    return res.status(501).json({
+      success: false,
+      error: 'Interactive run sessions are disabled in this serverless deployment.'
+    });
+  }
+
   const bodyResult = normalizeJsonBody(req.body);
   if ('error' in bodyResult) {
     return res.status(400).json({ success: false, error: bodyResult.error });
@@ -211,6 +272,13 @@ export function runInputHandler(req: RequestLike, res: ResponseLike) {
 }
 
 export function runEofHandler(req: RequestLike, res: ResponseLike) {
+  if (!supportsInteractiveRunSessions()) {
+    return res.status(501).json({
+      success: false,
+      error: 'Interactive run sessions are disabled in this serverless deployment.'
+    });
+  }
+
   const bodyResult = normalizeJsonBody(req.body);
   if ('error' in bodyResult) {
     return res.status(400).json({ success: false, error: bodyResult.error });
@@ -230,6 +298,13 @@ export function runEofHandler(req: RequestLike, res: ResponseLike) {
 }
 
 export function runStopHandler(req: RequestLike, res: ResponseLike) {
+  if (!supportsInteractiveRunSessions()) {
+    return res.status(501).json({
+      success: false,
+      error: 'Interactive run sessions are disabled in this serverless deployment.'
+    });
+  }
+
   const bodyResult = normalizeJsonBody(req.body);
   if ('error' in bodyResult) {
     return res.status(400).json({ success: false, error: bodyResult.error });

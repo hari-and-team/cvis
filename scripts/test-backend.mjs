@@ -169,20 +169,24 @@ async function main() {
   log('✓ Invalid trace input is rejected cleanly');
   log('');
 
-  log('Test 10: Trace supports switch/case execution');
+  log('Test 10: Trace supports switch/case control flow');
   const switchTrace = await getJson(`${API_BASE}/api/trace`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       code:
-        '#include <stdio.h>\nint main() {\n  int x = 2;\n  int y = 0;\n  switch (x) {\n    case 1:\n      y = 10;\n      break;\n    case 2:\n      y = 20;\n      break;\n    default:\n      y = 30;\n  }\n  return y;\n}\n'
+        '#include <stdio.h>\nint main() {\n  int x = 2;\n  int y = 0;\n  switch (x) {\n    case 1:\n      y = 11;\n      break;\n    case 2:\n      y = 22;\n      break;\n    default:\n      y = 33;\n  }\n  return y;\n}\n'
     })
   });
   log(JSON.stringify(switchTrace.body, null, 2));
   assert(switchTrace.body?.success === true, 'Switch/case trace should succeed');
-  const switchLocals = switchTrace.body?.steps?.at(-1)?.runtime?.frames?.[0]?.locals ?? {};
-  assert(switchLocals.y === 20, 'Switch/case trace should follow the matching branch');
-  log('✓ Switch/case trace returns the matching branch state');
+  const switchLastStep = switchTrace.body?.steps?.at(-1);
+  const switchY = switchLastStep?.runtime?.frames?.[0]?.locals?.y;
+  assert(
+    switchY === 22,
+    'Switch/case trace should execute the matching branch and preserve break semantics'
+  );
+  log('✓ Switch/case trace now succeeds');
   log('');
 
   log('Test 11: Trace stops runaway loops cleanly');
