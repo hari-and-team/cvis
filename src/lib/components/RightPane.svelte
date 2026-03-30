@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
-  import type { TraceStep } from '$lib/types';
+  import { createEventDispatcher, onDestroy } from 'svelte';
+  import type { TraceReadinessResult, TraceStep } from '$lib/types';
   import {
     activeMilestoneIndex,
     editorCode,
@@ -50,6 +50,14 @@
   export let isTracing = false;
   export let traceErr: string | null = null;
   export let traceNotice: string | null = null;
+  export let traceReadiness: TraceReadinessResult | null = null;
+  export let showTraceReadinessPrompt = false;
+
+  const dispatch = createEventDispatcher<{
+    trace: { force?: boolean };
+    runexact: void;
+    dismisstracereadiness: void;
+  }>();
 
   let prevMentorProblemId: string | null = null;
   const intentExplainer = createIntentExplainerController();
@@ -105,12 +113,9 @@
     isTracing,
     traceErr,
     nativeExecutionEnabled: $nativeExecutionEnabledStore,
-    traceNotice
-  });
-  $: analysisViewModel = buildAnalysisViewModel({
-    editorCode: $editorCode,
-    analysis: unifiedAnalysis,
-    intentExplainer: intentExplainerState
+    traceNotice,
+    traceReadiness,
+    showTraceReadinessPrompt
   });
   $: mentorViewModel = buildMentorPanelViewModel({
     analysis: unifiedAnalysis,
@@ -119,6 +124,12 @@
     selectedPracticeProblemId: $selectedPracticeProblemId,
     activeMilestoneIndex: $activeMilestoneIndex,
     milestoneProgress: $milestoneProgress
+  });
+  $: analysisViewModel = buildAnalysisViewModel({
+    editorCode: $editorCode,
+    analysis: unifiedAnalysis,
+    intentExplainer: intentExplainerState,
+    mentor: mentorViewModel
   });
   $: recommendedProblems = analysisViewModel.recommendedProblems;
   $: guidedMentorSelection = mentorViewModel.personalizedMentorQueue[0] ?? null;
@@ -212,6 +223,18 @@
   ): number {
     return getFirstIncompleteMilestoneIndex($milestoneProgress, recommendation);
   }
+
+  function triggerTrace(force = false) {
+    dispatch('trace', { force });
+  }
+
+  function triggerRunExact() {
+    dispatch('runexact');
+  }
+
+  function dismissTraceReadiness() {
+    dispatch('dismisstracereadiness');
+  }
 </script>
 
 <div class="right-pane">
@@ -242,7 +265,12 @@
     {/if}
 
     {#if $rightPaneTab === 'visualizer'}
-      <VisualizerPanel viewModel={visualizerViewModel} />
+      <VisualizerPanel
+        viewModel={visualizerViewModel}
+        onTrace={triggerTrace}
+        onRunExact={triggerRunExact}
+        onDismissTraceReadiness={dismissTraceReadiness}
+      />
     {/if}
 
     {#if $rightPaneTab === 'analysis'}

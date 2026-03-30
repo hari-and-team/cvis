@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { AlertTriangle, Cpu, Loader2 } from 'lucide-svelte';
+  import { AlertTriangle, Cpu, Info, Loader2 } from 'lucide-svelte';
   import type { VisualizerViewModel } from '$lib/app-shell/right-pane/view-models';
   import Visualizer from '$lib/components/Visualizer.svelte';
   import { traceInputDraft } from '$lib/stores';
@@ -8,6 +8,9 @@
   import { VISUALIZER_FEATURES } from '$lib/components/right-pane-config';
 
   export let viewModel: VisualizerViewModel;
+  export let onTrace: (force?: boolean) => void = () => {};
+  export let onRunExact: () => void = () => {};
+  export let onDismissTraceReadiness: () => void = () => {};
 
   const TRACE_LOADING_TICK_MS = 850;
   let loadingStepIndex = 0;
@@ -27,6 +30,8 @@
   $: traceConsoleStatus = viewModel.traceConsoleStatus;
   $: isTracing = viewModel.isTracing;
   $: traceErr = viewModel.traceErr;
+  $: traceReadiness = viewModel.traceReadiness;
+  $: showTraceReadinessPrompt = viewModel.showTraceReadinessPrompt;
   $: traceStepList = viewModel.traceSteps;
   $: currentTraceStepData = viewModel.currentTraceStepData;
   $: loadingSteps = viewModel.loadingSteps;
@@ -54,9 +59,82 @@
       clearInterval(loadingTicker);
     }
   });
+
+  function getTraceReadinessTitle() {
+    if (!traceReadiness) return 'Trace readiness';
+    if (traceReadiness.status === 'partial') {
+      return 'Trace may be approximate';
+    }
+    if (traceReadiness.status === 'unsupported') {
+      return 'Trace is outside the supported subset';
+    }
+    return 'Trace is supported';
+  }
+
+  function getTraceReadinessSummary() {
+    if (!traceReadiness) return '';
+    if (traceReadiness.status === 'partial') {
+      return 'This code mixes supported DSA patterns with C constructs that the visual trace may only approximate.';
+    }
+    if (traceReadiness.status === 'unsupported') {
+      return 'Compile + Run is the exact path for this program. You can still force trace if you want to inspect the best-effort visualization.';
+    }
+    return 'This program fits the current DSA-focused trace subset.';
+  }
 </script>
 
 <div class="visualizer-tab-shell">
+  {#if showTraceReadinessPrompt && traceReadiness}
+    <section class="trace-readiness-card">
+      <div class="trace-readiness-header">
+        <div class="trace-readiness-copy">
+          <span class="trace-readiness-kicker">Trace readiness</span>
+          <span class="trace-readiness-title">{getTraceReadinessTitle()}</span>
+          <span class="trace-readiness-subtitle">{getTraceReadinessSummary()}</span>
+        </div>
+        <span class={`trace-readiness-pill trace-readiness-pill-${traceReadiness.status}`}>
+          {traceReadiness.status}
+        </span>
+      </div>
+
+      {#if traceReadiness.reasons.length > 0}
+        <div class="trace-readiness-reasons">
+          {#each traceReadiness.reasons.slice(0, 3) as reason}
+            <div class="trace-readiness-reason">
+              <div class="trace-readiness-reason-icon">
+                {#if reason.severity === 'info'}
+                  <Info size={14} />
+                {:else}
+                  <AlertTriangle size={14} />
+                {/if}
+              </div>
+              <div class="trace-readiness-reason-copy">
+                <span class="trace-readiness-reason-line">
+                  {#if reason.line}L{reason.line}{:else}Trace engine{/if}
+                </span>
+                <span class="trace-readiness-reason-text">{reason.message}</span>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="trace-readiness-actions">
+        <button type="button" class="panel-action-btn panel-action-btn-primary" on:click={onRunExact}>
+          <Cpu size={14} />
+          <span>Compile + Run Exact</span>
+        </button>
+        <button type="button" class="panel-action-btn panel-action-btn-secondary" on:click={() => onTrace(true)}>
+          <AlertTriangle size={14} />
+          <span>Trace Anyway</span>
+        </button>
+        <button type="button" class="trace-readiness-dismiss" on:click={onDismissTraceReadiness}>
+          Dismiss
+        </button>
+      </div>
+    </section>
+  {/if}
+
   <section class="trace-runtime-card">
     <div class="trace-runtime-header">
       <div class="trace-runtime-copy">
@@ -123,7 +201,6 @@
       <pre class="trace-runtime-output">{normalizeTerminalText(traceConsoleOutput)}</pre>
     {/if}
   </section>
-
   <div class="visualizer-panel-body">
     {#if isTracing}
       <div class="loading-state">

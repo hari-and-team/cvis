@@ -12,6 +12,9 @@ const DEV_BACKEND_ORIGIN = `https://${DEV_BACKEND_HOST}:3001`;
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT_NODE_MODULES = path.join(PROJECT_ROOT, 'node_modules');
 const SERVER_NODE_MODULES = path.join(PROJECT_ROOT, 'server', 'node_modules');
+const ROOT_SELF_SIGNED_PACKAGE = path.join(ROOT_NODE_MODULES, 'selfsigned', 'package.json');
+const ROOT_VITE_PACKAGE = path.join(ROOT_NODE_MODULES, 'vite', 'package.json');
+const ROOT_CONCURRENTLY_PACKAGE = path.join(ROOT_NODE_MODULES, 'concurrently', 'package.json');
 let gccPathModulePromise;
 
 function npmCommand() {
@@ -109,6 +112,26 @@ async function ensureDependenciesInstalled() {
   }
 }
 
+async function ensureDependenciesInstalledStrict() {
+  const rootDepsMissing =
+    !existsSync(ROOT_NODE_MODULES) ||
+    !existsSync(ROOT_SELF_SIGNED_PACKAGE) ||
+    !existsSync(ROOT_VITE_PACKAGE) ||
+    !existsSync(ROOT_CONCURRENTLY_PACKAGE);
+
+  if (rootDepsMissing) {
+    console.log('â„¹ï¸ Root dependencies are missing or incomplete. Installing...');
+    await runCommand(npmCommand(), ['install'], { cwd: PROJECT_ROOT });
+  }
+
+  const serverDepsMissing = !existsSync(SERVER_NODE_MODULES);
+
+  if (serverDepsMissing) {
+    console.log('â„¹ï¸ Backend dependencies are missing or incomplete. Installing...');
+    await runCommand(npmCommand(), ['install'], { cwd: path.join(PROJECT_ROOT, 'server') });
+  }
+}
+
 async function checkLocalCompilerReadiness() {
   const { getEffectiveGccSource, verifyGcc } = await loadGccPathModule();
   const compilerReady = await verifyGcc();
@@ -183,6 +206,7 @@ async function isBackendRunning() {
   return null;
 }
 
+await ensureDependenciesInstalledStrict();
 const tls = await ensureDevTlsCert();
 process.env.TLS_KEY_FILE = tls.keyPath;
 process.env.TLS_CERT_FILE = tls.certPath;
@@ -208,7 +232,6 @@ if (tls.trusted !== true) {
 const backendProtocol = await isBackendRunning();
 
 if (backendProtocol === DEV_BACKEND_ORIGIN) {
-  await ensureDependenciesInstalled();
   console.log(`ℹ️ Backend already running on ${DEV_BACKEND_ORIGIN}. Starting HTTPS frontend only.`);
   console.log('ℹ️ Open: https://localhost:5173/');
   runNpmScript('dev');
@@ -219,7 +242,6 @@ if (backendProtocol === DEV_BACKEND_ORIGIN) {
     process.exit(1);
   }
 
-  await ensureDependenciesInstalled();
   await checkLocalCompilerReadiness();
   console.log('ℹ️ Starting backend and frontend together over HTTPS.');
   console.log('ℹ️ Open: https://localhost:5173/');

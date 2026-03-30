@@ -1,12 +1,14 @@
 import {
   closeRunInput,
   compileCode,
+  getTraceReadiness,
   pollRunSession,
   sendRunInput,
   startRunSession,
   stopRunSession,
   traceCode
 } from '$lib/api';
+import type { TraceReadinessResult } from '$lib/types';
 import {
   currentStepIndex,
   errorMessage,
@@ -37,10 +39,13 @@ interface TraceActionParams {
   code: string;
   breakpoints?: number[];
   input?: string;
+  force?: boolean;
 }
 
 interface TraceActionResult {
   traceErr: string | null;
+  readiness: TraceReadinessResult | null;
+  didTrace: boolean;
 }
 
 function getErrorMessage(err: unknown, fallback: string): string {
@@ -492,7 +497,8 @@ export async function interruptRuntimeSession(): Promise<void> {
 export async function runTraceAction({
   code,
   breakpoints = [],
-  input
+  input,
+  force = false
 }: TraceActionParams): Promise<TraceActionResult> {
   try {
     const validationError = validateTraceRequest(code);
@@ -501,7 +507,7 @@ export async function runTraceAction({
       errorMessage.set(validationError);
       traceSteps.set([]);
       currentStepIndex.set(0);
-      return { traceErr: validationError };
+      return { traceErr: validationError, readiness: null, didTrace: false };
     }
 
     errorMessage.set(null);
@@ -509,16 +515,26 @@ export async function runTraceAction({
     traceSteps.set([]);
     currentStepIndex.set(0);
 
+    let readiness: TraceReadinessResult | null = null;
+    if (!force) {
+      readiness = await getTraceReadiness({ code });
+      if (readiness.status !== 'supported') {
+        return { traceErr: null, readiness, didTrace: false };
+      }
+    }
+
     const result = await traceCode({
       code,
       breakpoints,
-      input: input ?? ''
+      input: input ?? '',
+      force
     });
+    readiness = result.readiness ?? readiness;
 
     if (result.success) {
       traceSteps.set(result.steps);
       currentStepIndex.set(getInitialTraceStepIndex(result.steps));
-      return { traceErr: null };
+      return { traceErr: null, readiness, didTrace: true };
     }
 
     const traceErr = result.errors.join('\n') || 'Trace failed';
@@ -526,7 +542,7 @@ export async function runTraceAction({
     traceSteps.set([]);
     currentStepIndex.set(0);
     errorMessage.set(traceErr);
-    return { traceErr };
+    return { traceErr, readiness, didTrace: false };
   } catch (err) {
     const message = getErrorMessage(err, 'An error occurred during tracing');
     console.error('Trace error:', err);
@@ -534,6 +550,6 @@ export async function runTraceAction({
     traceSteps.set([]);
     currentStepIndex.set(0);
     errorMessage.set(message);
-    return { traceErr: message };
+    return { traceErr: message, readiness: null, didTrace: false };
   }
 }
