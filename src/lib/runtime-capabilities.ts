@@ -7,10 +7,14 @@ import {
   type ExecutionMode
 } from '$lib/execution-mode';
 
+function getConfiguredApiBase(): string {
+  return normalizeApiBase(env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || '');
+}
+
 function getConfiguredExecutionMode(): ExecutionMode {
   return resolveExecutionMode({
     explicitMode: env.PUBLIC_EXECUTION_MODE,
-    apiBase: normalizeApiBase(env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || ''),
+    apiBase: getConfiguredApiBase(),
     dev: import.meta.env.DEV
   });
 }
@@ -30,8 +34,12 @@ export async function hydrateRuntimeCapabilities(): Promise<void> {
   }
 
   hydrationPromise = (async () => {
+    const configuredApiBase = getConfiguredApiBase();
+    const shouldProbeExternalBackend = configuredApiBase.length > 0;
+
     try {
-      const response = await fetch('/health', {
+      const healthUrl = shouldProbeExternalBackend ? `${configuredApiBase}/health` : '/health';
+      const response = await fetch(healthUrl, {
         headers: {
           Accept: 'application/json'
         }
@@ -53,18 +61,17 @@ export async function hydrateRuntimeCapabilities(): Promise<void> {
       const supportsCompileRun =
         typeof payload.supportsCompileRun === 'boolean' ? payload.supportsCompileRun : null;
 
-      if (healthMode) {
-        executionMode.set(healthMode);
-        return;
-      }
-
       if (supportsCompileRun === false) {
         executionMode.set('trace-only');
       } else if (supportsCompileRun === true) {
         executionMode.set('full');
+      } else if (healthMode) {
+        executionMode.set(healthMode);
       }
     } catch {
-      // Keep configured mode if health probing fails.
+      if (shouldProbeExternalBackend) {
+        executionMode.set('trace-only');
+      }
     }
   })();
 
@@ -80,5 +87,5 @@ export function nativeExecutionEnabled(): boolean {
 }
 
 export function nativeExecutionUnavailableMessage(): string {
-  return 'Compile and live run are disabled in this deployment. This Vercel setup supports trace and analysis only.';
+  return 'Compile and live run are unavailable because the configured execution backend does not currently support GCC execution.';
 }
