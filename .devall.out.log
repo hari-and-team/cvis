@@ -2,6 +2,47 @@
 > compiler@0.0.0 dev:all
 > node scripts/dev-all.mjs
 
-ℹ️ Using system compiler fallback for now.
-ℹ️ Recommended teammate-safe setup: `npm run setup:toolchain`
 ℹ️ Starting backend and frontend together.
+
+> compiler@0.0.0 dev:stack
+> concurrently -k -n backend,frontend -c green,blue "npm:backend" "npm:dev"
+
+[backend] 
+[backend] > compiler@0.0.0 backend
+[backend] > tsx server/index.ts
+[backend] 
+[frontend] 
+[frontend] > compiler@0.0.0 dev
+[frontend] > vite dev
+[frontend] 
+[backend] Checking GCC availability...
+[backend] ✓ GCC found at: C:\Users\welcome\OneDrive\Desktop\cvis\.cvis-toolchain\toolchains\gcc-xpack-15.2.0-1-win32-x64\xpack-gcc-15.2.0-1\bin\gcc.exe
+[backend] ✓ GCC source: project-local
+[backend] ✓ Toolchain version: 15.2.0-1
+[backend] 
+[backend] ═══════════════════════════════════════════════
+[backend]   C DSA Visualizer Backend Server
+[backend] ═══════════════════════════════════════════════
+[backend]   Status:      Running
+[backend]   Environment: Local
+[backend]   Protocol:    HTTP
+[backend]   Port:        3001
+[backend]   Host:        localhost
+[backend]   GCC:         C:\Users\welcome\OneDrive\Desktop\cvis\.cvis-toolchain\toolchains\gcc-xpack-15.2.0-1-win32-x64\xpack-gcc-15.2.0-1\bin\gcc.exe
+[backend]   GCC Source:  project-local
+[backend]   GCC Version: gcc.exe (xPack MinGW-w64 GCC x86_64) 15.2.0
+[backend]   Toolchain:   15.2.0-1
+[backend] 
+[backend]   Endpoints:
+[backend]     POST /api/compile - Compile C code
+[backend]     POST /api/run     - Execute binary
+[backend]     POST /api/trace   - Trace execution
+[backend]     GET  /health      - Health check
+[backend] ═══════════════════════════════════════════════
+[backend] 
+[frontend] 
+[frontend]   [32m[1mVITE[22m v6.4.1[39m  [2mready in [0m[1m1314[22m[2m[0m ms[22m
+[frontend] 
+[frontend]   [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+[frontend]   [32m➜[39m  [1mNetwork[22m: [36mhttp://10.144.5.223:[1m5173[22m/[39m
+[backend] [2026-03-29T13:08:13.770Z] GET /health
