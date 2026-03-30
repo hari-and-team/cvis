@@ -1,5 +1,5 @@
 import { DEV_CORS_ORIGINS } from '../../config/constants.js';
-import type { NextLike, RequestLike, ResponseLike } from './http-types.ts';
+import type { NextLike, RequestLike, ResponseLike } from './http-types.js';
 
 type CorsSettings = {
   origin: boolean | string | string[];

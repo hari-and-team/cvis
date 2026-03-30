@@ -7,16 +7,16 @@ import type {
   NextLike,
   RequestLike,
   ResponseLike
-} from './lib/http/http-types.ts';
-import { getErrorMessage } from './lib/http/request-validation.ts';
+} from './lib/http/http-types.js';
+import { getErrorMessage } from './lib/http/request-validation.js';
 import {
   httpsEnforcementMiddleware,
   rateLimitMiddleware,
   resolveCorsSettings,
   resolveTrustProxySetting,
   securityHeadersMiddleware
-} from './lib/http/security.ts';
-import { registerRoutes } from './routes/index.ts';
+} from './lib/http/security.js';
+import { registerRoutes } from './routes/index.js';
 
 export function createApp(): ListenableAppLike {
   const app = express();
@@ -74,3 +74,7 @@ export function createApp(): ListenableAppLike {
 
   return app as unknown as ListenableAppLike;
 }
+
+const app = createApp();
+
+export default app;

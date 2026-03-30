@@ -1,8 +1,8 @@
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { readFile } from 'node:fs/promises';
-import type { ListenableAppLike } from './lib/http/http-types.ts';
-import { createApp } from './app.ts';
+import type { ListenableAppLike } from './lib/http/http-types.js';
+import app from './app.js';
 import { PORT } from './config/constants.js';
 import {
   getGccHealthDetails,
@@ -10,7 +10,7 @@ import {
   verifyGcc
 } from './lib/gcc-path.js';
 
-const app = createApp() as ListenableAppLike;
+const listenableApp = app as ListenableAppLike;
 
 export default app as never;
 
@@ -107,8 +107,8 @@ async function startServer() {
   const host = process.env.BACKEND_HOST || (process.env.DOCKER_ENV ? '0.0.0.0' : 'localhost');
   const protocol = tlsOptions ? 'https' : 'http';
   const server = tlsOptions
-    ? createHttpsServer(tlsOptions, app as never)
-    : createHttpServer(app as never);
+    ? createHttpsServer(tlsOptions, listenableApp as never)
+    : createHttpServer(listenableApp as never);
 
   server.listen(PORT, host, () => {
     logStartupBanner(protocol, host, gccDetails);

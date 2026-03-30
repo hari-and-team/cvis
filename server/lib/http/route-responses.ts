@@ -1,4 +1,4 @@
-import { getErrorMessage } from './request-validation';
+import { getErrorMessage } from './request-validation.js';
 
 export function compileValidationResponse(message: string) {
   return {
