@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Simple C Interpreter for Visualization
  * 
@@ -16,7 +17,7 @@
 
 import { snapshotValue, MAX_TRACE_ARRAY_ALLOCATION_LENGTH } from './trace/runtime-snapshot.js';
 import { normalizeTraceError } from './trace/trace-errors.js';
-import { detectUnsupportedTraceFeature } from './trace/unsupported-syntax.js';
+import { collectUnsupportedTraceReasons } from './trace/unsupported-syntax.js';
 
 // ============================================================================
 // TOKENIZER
@@ -31,6 +32,31 @@ const KEYWORDS = new Set([
 
 const TYPES = new Set(['int', 'float', 'double', 'char', 'void', 'long', 'short', 'unsigned']);
 const MAX_TRACE_CALL_DEPTH = 256;
+const TRACE_PROFILE = 'dsa-v1';
+const PARTIAL_TRACE_PATTERNS = [
+  {
+    code: 'address-of-array-element',
+    regex: /&\s*\(?\s*[A-Za-z_]\w*\s*\[[^\]]+\]\s*\)?/,
+    message: 'Trace may not fully model address-of array elements like &arr[i] yet.'
+  },
+  {
+    code: 'address-of-member',
+    regex: /&\s*\(?\s*[A-Za-z_]\w*\s*(?:->|\.)/,
+    message: 'Trace may not fully model address-of struct member expressions like &(node->field) yet.'
+  },
+  {
+    code: 'pointer-arithmetic',
+    regex: /(?:\+\+|--)\s*\*\s*[A-Za-z_]\w*|\*\s*[A-Za-z_]\w*\s*(?:\+\+|--)/,
+    message: 'Trace may not fully model pointer arithmetic or pointer-walking updates beyond the current DSA subset.'
+  }
+];
+const HARD_UNSUPPORTED_PATTERNS = [
+  {
+    code: 'function-pointer',
+    regex: /\(\s*\*\s*[A-Za-z_]\w*\s*\)\s*\(/,
+    message: 'Trace does not support function pointers yet. Use compile/run for exact execution.'
+  }
+];
 
 function tokenize(code) {
   const tokens = [];
@@ -846,6 +872,9 @@ class Interpreter {
     this.callStack = []; // Array of { name, locals, returnAddr }
     this.heap = new Map(); // address -> value
     this.nextHeapAddr = 0x1000;
+    this.addressRefs = new Map(); // address -> { get, set }
+    this.scopeAddressCache = new WeakMap();
+    this.nextRefAddr = 0x100000;
     
     this.output = '';
     this.breakFlag = false;
@@ -854,6 +883,100 @@ class Interpreter {
 
     this.stdin = typeof input === 'string' ? input : '';
     this.stdinCursor = 0;
+    this.inputReplayExhaustedLine = null;
+  }
+
+  getScopeForName(name) {
+    for (let i = this.callStack.length - 1; i >= 0; i--) {
+      if (name in this.callStack[i].locals) {
+        return this.callStack[i].locals;
+      }
+    }
+
+    if (name in this.globalVars) {
+      return this.globalVars;
+    }
+
+    return this.getCurrentLocals();
+  }
+
+  getOrCreateReference(scope, name) {
+    if (!scope || typeof scope !== 'object') {
+      return 0;
+    }
+
+    let scopedAddresses = this.scopeAddressCache.get(scope);
+    if (!scopedAddresses) {
+      scopedAddresses = new Map();
+      this.scopeAddressCache.set(scope, scopedAddresses);
+    }
+
+    const cached = scopedAddresses.get(name);
+    if (cached) {
+      return cached;
+    }
+
+    const address = this.nextRefAddr++;
+    scopedAddresses.set(name, address);
+    this.addressRefs.set(address, {
+      get: () => scope[name] ?? 0,
+      set: (value) => {
+        scope[name] = value;
+      }
+    });
+    return address;
+  }
+
+  resolveReferenceAddress(address) {
+    if (!address) {
+      return null;
+    }
+    return this.addressRefs.get(address) ?? null;
+  }
+
+  writeReferenceTarget(target, value) {
+    if (!target) {
+      return false;
+    }
+
+    if (target.type === 'Identifier') {
+      this.setVar(target.name, value);
+      return true;
+    }
+
+    if (target.type === 'Index') {
+      const arr = this.evaluate(target.object);
+      const idx = this.evaluate(target.index);
+      if (Array.isArray(arr) && Number.isInteger(idx) && idx >= 0) {
+        arr[idx] = value;
+        return true;
+      }
+      return false;
+    }
+
+    if (target.type === 'Member' || target.type === 'PtrMember') {
+      const container = this.resolveMemberContainer(target);
+      if (container) {
+        container[target.member] = value;
+        return true;
+      }
+      return false;
+    }
+
+    if (target.type === 'Unary' && target.op === '*') {
+      const address = this.evaluate(target.operand);
+      const ref = this.resolveReferenceAddress(address);
+      if (ref) {
+        ref.set(value);
+        return true;
+      }
+      if (address) {
+        this.heap.set(address, value);
+        return true;
+      }
+    }
+
+    return false;
   }
 
   skipInputWhitespace() {
@@ -951,13 +1074,7 @@ class Interpreter {
       return false;
     }
 
-    const reference = this.resolveLValue(normalizedTarget);
-    if (reference) {
-      reference.write(value);
-      return true;
-    }
-
-    return false;
+    return this.writeReferenceTarget(normalizedTarget, value);
   }
 
   run() {
@@ -990,7 +1107,8 @@ class Interpreter {
       return normalizeTraceError(err, {
         steps: this.steps,
         output: this.output,
-        phase: 'runtime'
+        phase: 'runtime',
+        inputReplayExhaustedLine: this.inputReplayExhaustedLine
       });
     }
   }
@@ -1356,7 +1474,7 @@ class Interpreter {
           }
 
           if (this.continueFlag || this.returnValue !== null) {
-            break;
+            return;
           }
         }
         return;
@@ -1468,7 +1586,6 @@ class Interpreter {
       target[i] = this.evaluate(element);
     }
   }
-
   executeArrayDecl(node, shouldRecord = true) {
     if (shouldRecord) {
       this.recordStep(node.line, `Array declaration: ${node.name}`);
@@ -1490,7 +1607,6 @@ class Interpreter {
     if (node.init?.elements) {
       this.applyArrayInitializer(arr, node.init);
     }
-
     this.setVar(node.name, arr);
   }
 
@@ -1554,9 +1670,13 @@ class Interpreter {
         switch (node.op) {
           case '-': return -operand;
           case '!': return operand ? 0 : 1;
-          case '&':
+          case '&': {
+            if (node.operand?.type === 'Identifier') {
+              const scope = this.getScopeForName(node.operand.name);
+              return this.getOrCreateReference(scope, node.operand.name);
+            }
+
             if (
-              node.operand?.type === 'Identifier' ||
               node.operand?.type === 'Index' ||
               node.operand?.type === 'Member' ||
               node.operand?.type === 'PtrMember'
@@ -1566,12 +1686,19 @@ class Interpreter {
                 return { __traceRef: true, reference };
               }
             }
+
             return this.nextHeapAddr++;
-          case '*':
+          }
+          case '*': {
             if (this.isTraceReference(operand)) {
               return operand.reference?.read() ?? 0;
             }
-            return this.heap.get(operand) || 0; // Simplified dereference
+            const ref = this.resolveReferenceAddress(operand);
+            if (ref) {
+              return ref.get();
+            }
+            return this.heap.get(operand) || 0;
+          }
           default: return operand;
         }
       }
@@ -1596,6 +1723,29 @@ class Interpreter {
           }
           reference.write(val);
           return val;
+        }
+        if (node.left.type === 'Unary' && node.left.op === '*') {
+          let val = right;
+          const current = this.evaluate(node.left);
+          if (node.op !== '=') {
+            switch (node.op) {
+              case '+=': val = current + right; break;
+              case '-=': val = current - right; break;
+              case '*=': val = current * right; break;
+              case '/=': val = right === 0 ? current : Math.trunc(current / right); break;
+              case '%=': val = right === 0 ? current : current % right; break;
+            }
+          }
+          this.writeReferenceTarget(node.left, val);
+          return val;
+        }
+        if (node.left.type === 'Index') {
+          this.writeReferenceTarget(node.left, right);
+          return right;
+        }
+        if (node.left.type === 'Member' || node.left.type === 'PtrMember') {
+          this.writeReferenceTarget(node.left, right);
+          return right;
         }
         return right;
       }
@@ -1674,6 +1824,9 @@ class Interpreter {
             if (argIndex >= node.args.length) break;
             const readValue = this.readScanfValue(spec);
             if (readValue === null) {
+              if (this.inputReplayExhaustedLine === null) {
+                this.inputReplayExhaustedLine = node.line ?? null;
+              }
               break;
             }
 
@@ -1724,25 +1877,205 @@ class Interpreter {
 }
 
 // ============================================================================
+// TRACE READINESS
+// ============================================================================
+
+function extractTraceErrorLine(message) {
+  if (typeof message !== 'string') {
+    return null;
+  }
+
+  const match = message.match(/\bline\s+(\d+)\b/i);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function stripCodeForReadiness(code) {
+  return code
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/.*$/gm, ' ')
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''");
+}
+
+function collectPatternReasons(code, patterns, severity) {
+  const stripped = stripCodeForReadiness(code);
+  const reasons = [];
+  const seen = new Set();
+
+  for (const pattern of patterns) {
+    const match = stripped.match(pattern.regex);
+    if (!match) continue;
+    const before = stripped.slice(0, match.index ?? 0);
+    const line = before.split('\n').length;
+    const key = `${pattern.code}:${line}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reasons.push({
+      line,
+      severity,
+      code: pattern.code,
+      message: pattern.message
+    });
+  }
+
+  return reasons;
+}
+
+function tryParseProgram(code) {
+  const tokens = applyDefines(tokenize(code));
+  const parser = new Parser(tokens);
+  const ast = parser.parseProgram();
+  return { ast };
+}
+
+function collectDetectedFeatures(code) {
+  const features = [];
+  const add = (feature, regex) => {
+    if (regex.test(code) && !features.includes(feature)) {
+      features.push(feature);
+    }
+  };
+
+  add('functions', /\b(?:int|void|char|float|double|struct\s+\w+|\w+)\s+\**\s*[A-Za-z_]\w*\s*\([^;{]*\)\s*\{/);
+  add('recursion', /\b([A-Za-z_]\w*)\s*\([^;{]*\)\s*\{[\s\S]*\b\1\s*\(/);
+  add('arrays', /\[[^\]]*\]/);
+  add('array-of-pointers', /\*\s*[A-Za-z_]\w*\s*\[[^\]]+\]/);
+  add('typedef-struct', /\btypedef\s+struct\b/);
+  add('struct', /\bstruct\b/);
+  add('pointer-members', /->/);
+  add('malloc', /\b(?:malloc|calloc|free)\s*\(/);
+  add('double-pointers', /\*\*/);
+  add('scanf', /\bscanf\s*\(/);
+  add('printf', /\b(?:printf|puts)\s*\(/);
+  add('for-loops', /\bfor\s*\(/);
+  add('while-loops', /\bwhile\s*\(/);
+  add('sorting-loops', /\bfor\s*\([^)]*\)\s*\{?[\s\S]*\bfor\s*\(/);
+  add('binary-search', /\blow\b[\s\S]*\bhigh\b[\s\S]*\bmid\b/);
+  add('linked-list', /\bnext\b/);
+  add('tree', /\bleft\b[\s\S]*\bright\b/);
+  add('stack-pattern', /\b(top|stack)\b|\+\+\s*[A-Za-z_]\w*[\s\S]*\[\s*[A-Za-z_]\w*\s*\]/);
+  add('queue-pattern', /\b(front|rear)\b/);
+
+  return features;
+}
+
+function buildSupportedInfoReasons(features) {
+  const reasons = [];
+
+  if (features.includes('typedef-struct') || features.includes('struct')) {
+    reasons.push({
+      line: null,
+      severity: 'info',
+      code: 'supported-structs',
+      message: 'Trace supports struct-based DSA patterns with member and pointer-member access.'
+    });
+  }
+
+  if (features.includes('double-pointers')) {
+    reasons.push({
+      line: null,
+      severity: 'info',
+      code: 'supported-double-pointers',
+      message: 'Trace supports common DSA pointer-to-pointer updates such as root/head/top style mutation.'
+    });
+  }
+
+  if (features.includes('arrays') || features.includes('array-of-pointers')) {
+    reasons.push({
+      line: null,
+      severity: 'info',
+      code: 'supported-arrays',
+      message: 'Trace supports arrays and array-of-pointer patterns within the current DSA subset.'
+    });
+  }
+
+  return reasons.slice(0, 3);
+}
+
+export function assessTraceReadiness(code) {
+  const detectedFeatures = collectDetectedFeatures(code);
+  const hardUnsupportedReasons = [
+    ...collectUnsupportedTraceReasons(code),
+    ...collectPatternReasons(code, HARD_UNSUPPORTED_PATTERNS, 'block')
+  ];
+
+  if (hardUnsupportedReasons.length > 0) {
+    return {
+      success: true,
+      status: 'unsupported',
+      recommendedAction: 'compile-run',
+      reasons: hardUnsupportedReasons,
+      detectedFeatures,
+      traceProfile: TRACE_PROFILE
+    };
+  }
+
+  try {
+    tryParseProgram(code);
+  } catch (error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    return {
+      success: true,
+      status: 'unsupported',
+      recommendedAction: 'compile-run',
+      reasons: [
+        {
+          line: extractTraceErrorLine(rawMessage),
+          severity: 'block',
+          code: 'parse-error',
+          message: `Trace could not parse this C construct yet. ${rawMessage}`
+        }
+      ],
+      detectedFeatures,
+      traceProfile: TRACE_PROFILE
+    };
+  }
+
+  const partialReasons = collectPatternReasons(code, PARTIAL_TRACE_PATTERNS, 'warn');
+  if (partialReasons.length > 0) {
+    return {
+      success: true,
+      status: 'partial',
+      recommendedAction: 'compile-run',
+      reasons: partialReasons,
+      detectedFeatures,
+      traceProfile: TRACE_PROFILE
+    };
+  }
+
+  return {
+    success: true,
+    status: 'supported',
+    recommendedAction: 'trace',
+    reasons: buildSupportedInfoReasons(detectedFeatures),
+    detectedFeatures,
+    traceProfile: TRACE_PROFILE
+  };
+}
+
+// ============================================================================
 // MAIN EXPORT
 // ============================================================================
 
-export async function traceExecution(code, breakpoints = [], input = '') {
+export async function traceExecution(code, breakpoints = [], input = '', _options = {}) {
   try {
-    const unsupportedFeatureResult = detectUnsupportedTraceFeature(code);
-    if (unsupportedFeatureResult) {
-      return unsupportedFeatureResult;
+    const readiness = assessTraceReadiness(code);
+    if (readiness.status === 'unsupported') {
+      const primaryReason = readiness.reasons[0] ?? null;
+      return normalizeTraceError(primaryReason?.message ?? 'Trace is not supported for this code yet.', {
+        steps: [],
+        phase: 'unsupported',
+        line: primaryReason?.line ?? null,
+        readiness
+      });
     }
 
-    const rawTokens = tokenize(code);
-    const tokens = applyDefines(rawTokens);
-    const parser = new Parser(tokens);
-    const ast = parser.parseProgram();
+    const { ast } = tryParseProgram(code);
     const interpreter = new Interpreter(ast, 10000, input);
     const result = interpreter.run();
 
     if (!result.success) {
-      return result;
+      return { ...result, readiness };
     }
 
     const maxLine = typeof code === 'string' ? code.split(/\r?\n/).length : 0;
@@ -1751,7 +2084,7 @@ export async function traceExecution(code, breakpoints = [], input = '') {
       : [];
 
     if (validBreakpoints.length === 0) {
-      return result;
+      return { ...result, readiness };
     }
 
     const breakpointSet = new Set(validBreakpoints);
@@ -1760,7 +2093,8 @@ export async function traceExecution(code, breakpoints = [], input = '') {
     return {
       ...result,
       steps: filteredSteps,
-      totalSteps: filteredSteps.length
+      totalSteps: filteredSteps.length,
+      readiness
     };
   } catch (err) {
     return normalizeTraceError(err, { steps: [], phase: 'trace' });

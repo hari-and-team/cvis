@@ -6,6 +6,13 @@
   import HeaderBar from '$lib/components/HeaderBar.svelte';
   import OnboardingModal from '$lib/components/OnboardingModal.svelte';
   import RightPane from '$lib/components/RightPane.svelte';
+  import {
+    hydrateRuntimeCapabilities,
+    nativeExecutionEnabledStore,
+    nativeExecutionUnavailableMessage
+  } from '$lib/runtime-capabilities';
+  import TraceControlDock from '$lib/components/TraceControlDock.svelte';
+  import { buildVisualizerViewModel } from '$lib/app-shell/right-pane/view-models';
   import { runBinaryAction, runCompileAction, runTraceAction } from '$lib/runtime/actions';
   import {
     lastBinaryPath,
@@ -19,7 +26,13 @@
     selectedPracticeProblemId,
     activeMilestoneIndex,
     milestoneProgress,
+    pendingRunInputEcho,
     profileEditorOpen,
+    traceInputDraft,
+    lastCompileResult,
+    lastExecutionResult,
+    runConsoleTranscript,
+    runSessionId,
     userProfile
   } from '$lib/stores';
   import type { UserProfile } from '$lib/types';
@@ -45,6 +58,7 @@
     selectedPracticeProblemId: string | null;
     activeMilestoneIndex: number;
     milestoneProgress: Record<string, boolean>;
+    traceInputDraft: string;
     savedAt: number;
   }
 
@@ -56,6 +70,7 @@
       selectedPracticeProblemId: $selectedPracticeProblemId,
       activeMilestoneIndex: $activeMilestoneIndex,
       milestoneProgress: $milestoneProgress,
+      traceInputDraft: $traceInputDraft,
       savedAt
     };
   }
@@ -71,6 +86,7 @@
     selectedPracticeProblemId.set(draft.selectedPracticeProblemId);
     activeMilestoneIndex.set(draft.activeMilestoneIndex);
     milestoneProgress.set(draft.milestoneProgress);
+    traceInputDraft.set(draft.traceInputDraft);
   }
 
   function normalizeMilestoneProgress(value: unknown): Record<string, boolean> {
@@ -177,6 +193,7 @@
             ? Math.floor(parsed.activeMilestoneIndex)
             : 0,
         milestoneProgress: normalizeMilestoneProgress(parsed.milestoneProgress),
+        traceInputDraft: typeof parsed.traceInputDraft === 'string' ? parsed.traceInputDraft : '',
         savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now()
       };
     } catch {
@@ -283,6 +300,7 @@
   }
 
   onMount(() => {
+    void hydrateRuntimeCapabilities();
     restoreProfileFromStorage();
     restoreDraftFromStorage();
     lastEditorCodeSnapshot = $editorCode;
@@ -314,6 +332,7 @@
     $selectedPracticeProblemId;
     $activeMilestoneIndex;
     $milestoneProgress;
+    $traceInputDraft;
     scheduleDraftPersist();
   }
 
@@ -324,6 +343,23 @@
     traceErr = null;
     traceNotice = null;
   }
+
+  $: floatingVisualizerViewModel = buildVisualizerViewModel({
+    editorCode: $editorCode,
+    runConsoleTranscript: $runConsoleTranscript,
+    runSessionId: $runSessionId,
+    lastExecutionResult: $lastExecutionResult,
+    lastCompileResult: $lastCompileResult,
+    lastRunInputTranscript: $lastRunInputTranscript,
+    manualTraceInput: $traceInputDraft,
+    pendingRunInputEcho: $pendingRunInputEcho,
+    traceSteps: $traceSteps,
+    currentTraceStepData: $traceSteps[$currentStepIndex] ?? null,
+    isTracing,
+    traceErr,
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
+    traceNotice
+  });
 
   function resetTraceUiState() {
     traceSteps.set([]);
@@ -350,10 +386,7 @@
     resetTraceUiState();
     rightPaneTab.set('console');
 
-    await runBinaryAction({
-      binaryPath: $lastBinaryPath,
-      code: $editorCode
-    });
+    await runBinaryAction($lastBinaryPath);
   }
 
   async function handleTrace() {
@@ -365,10 +398,31 @@
     rightPaneTab.set('visualizer');
 
     const requiresRuntimeReplay = /\bscanf\s*\(/.test($editorCode);
-    const traceInput = $lastRunInputTranscript;
+    const hasManualTraceInput = $traceInputDraft.length > 0;
+    const staleCapturedInput = $lastExecutionResult?.completionReason === 'stopped';
+    const traceInput =
+      staleCapturedInput && hasManualTraceInput ? $traceInputDraft : $lastRunInputTranscript || $traceInputDraft;
+
+    if ($runSessionId) {
+      traceNotice =
+        'Finish the active Console run before tracing. Send EOF if the program is waiting for more input, or stop the run and start again.';
+      traceSteps.set([]);
+      currentStepIndex.set(0);
+      return;
+    }
 
     if (requiresRuntimeReplay && traceInput.length === 0) {
-      traceNotice = 'This program uses scanf(). Run it once in the Console, enter stdin there, then retrace to reuse that exact input.';
+      traceNotice = $nativeExecutionEnabledStore
+        ? 'This program uses scanf(). Run it once in the Console or enter stdin in the Visualizer tab, then retrace.'
+        : 'This program uses scanf(). Enter stdin in the Visualizer tab, then trace it again.';
+      traceSteps.set([]);
+      currentStepIndex.set(0);
+      return;
+    }
+
+    if (requiresRuntimeReplay && staleCapturedInput && !hasManualTraceInput) {
+      traceNotice =
+        'The latest Console run was stopped before the program finished, so its stdin replay may be incomplete. Run it again to completion, or send EOF, then trace again.';
       traceSteps.set([]);
       currentStepIndex.set(0);
       return;
@@ -411,6 +465,11 @@
       }
     }}
   />
+  {#if !$nativeExecutionEnabledStore}
+    <div class="deployment-banner" role="status" aria-live="polite">
+      {nativeExecutionUnavailableMessage()}
+    </div>
+  {/if}
   {#if competingDraft}
     <div class="draft-conflict-banner" role="status" aria-live="polite">
       <div class="draft-conflict-copy">
@@ -431,9 +490,13 @@
     </div>
   {/if}
   <div class="main">
-    <EditorPane />
+    <div class="workspace-column">
+      <EditorPane />
+      <div class="execution-dock">
+        <TraceControlDock viewModel={floatingVisualizerViewModel} onTrace={handleTrace} />
+      </div>
+    </div>
     <RightPane
-      on:trace={handleTrace}
       traceSteps={$traceSteps}
       currentStep={$currentStepIndex}
       {isTracing}
@@ -464,6 +527,26 @@
     display: flex;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
+  }
+
+  .workspace-column {
+    width: 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: #282c34;
+    border-right: 1px solid #3e4451;
+    min-height: 0;
+  }
+
+  .execution-dock {
+    flex-shrink: 0;
+    width: 100%;
+    padding: 8px 12px 12px;
+    background:
+      linear-gradient(180deg, rgba(40, 44, 52, 0.96) 0%, rgba(33, 37, 43, 0.98) 100%);
+    border-top: 1px solid rgba(92, 99, 112, 0.45);
   }
 
   .draft-conflict-banner {
@@ -474,6 +557,15 @@
     padding: 10px 16px;
     background: linear-gradient(135deg, rgba(209, 154, 102, 0.16), rgba(224, 108, 117, 0.14));
     border-bottom: 1px solid rgba(209, 154, 102, 0.28);
+  }
+
+  .deployment-banner {
+    padding: 10px 16px;
+    background: rgba(97, 175, 239, 0.14);
+    border-bottom: 1px solid rgba(97, 175, 239, 0.22);
+    color: #dceeff;
+    font-size: 12px;
+    line-height: 1.5;
   }
 
   .draft-conflict-copy {
@@ -528,6 +620,22 @@
   }
 
   @media (max-width: 900px) {
+    .main {
+      flex-direction: column;
+    }
+
+    .workspace-column {
+      width: 100%;
+      min-height: 0;
+      border-right: none;
+      border-bottom: 1px solid #3e4451;
+    }
+
+    .execution-dock {
+      width: 100%;
+      padding: 12px;
+    }
+
     .draft-conflict-banner {
       flex-direction: column;
       align-items: stretch;

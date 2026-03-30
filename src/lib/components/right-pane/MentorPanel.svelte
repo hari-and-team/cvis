@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowRight, CheckCircle2, Circle, Lightbulb, Target } from 'lucide-svelte';
   import type { MentorViewModel } from '$lib/mentor/view-model';
+  import { inertialScroll } from '$lib/shared/inertial-scroll';
 
   export let viewModel: MentorViewModel;
   export let onActivateGuidedMentorPlan: () => void;
@@ -32,31 +33,44 @@
 </script>
 
 <div class="analysis-panel mentor-panel">
-  <div class="analysis-scroll">
+  <div class="analysis-scroll" use:inertialScroll>
+    <section class="panel-intro-card panel-intro-card-mentor">
+      <div class="panel-intro-header">
+        <div class="panel-intro-copy">
+          <span class="panel-intro-kicker">Mentor</span>
+          <span class="panel-intro-title">Guided Practice</span>
+          <span class="panel-intro-subtitle">
+            Turn the strongest recommendation into a paced problem queue with milestone nudges.
+          </span>
+        </div>
+        <div class="panel-intro-actions">
+          <button
+            type="button"
+            class="panel-action-btn"
+            class:panel-action-btn-active={mentorSelectionMode === 'guided'}
+            on:click={onActivateGuidedMentorPlan}
+          >
+            AI-guided queue
+          </button>
+          {#if selectedMentorProblem}
+            <button
+              type="button"
+              class="panel-action-btn"
+              class:panel-action-btn-active={mentorSelectionMode === 'manual'}
+              on:click={() => onActivateManualMentorPlan(selectedMentorProblem)}
+            >
+              Manual choice
+            </button>
+          {/if}
+        </div>
+      </div>
+    </section>
+
     {#if selectedMentorProblem}
       <section class="analysis-card mentor-summary-card">
         <div class="analysis-header">
           <span class="analysis-title">AI Mentor</span>
           <span class="analysis-meta">{mentorCompletionPercent}% complete</span>
-        </div>
-
-        <div class="mentor-mode-row">
-          <button
-            type="button"
-            class="mentor-mode-btn"
-            class:mentor-mode-btn-active={mentorSelectionMode === 'guided'}
-            on:click={onActivateGuidedMentorPlan}
-          >
-            AI-guided queue
-          </button>
-          <button
-            type="button"
-            class="mentor-mode-btn"
-            class:mentor-mode-btn-active={mentorSelectionMode === 'manual'}
-            on:click={() => onActivateManualMentorPlan(selectedMentorProblem)}
-          >
-            Manual choice
-          </button>
         </div>
 
         <div class="mentor-summary-top">

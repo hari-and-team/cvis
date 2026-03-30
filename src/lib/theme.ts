@@ -1,29 +1,29 @@
-// One Dark Pro color palette
+// Shell-inspired twilight palette based on the local zsh/kitty theme
 export const TH = {
   // Backgrounds
-  bgDeep: "#21252b",     // Sidebar/deeper background
-  bgCard: "#282c34",     // Main background
-  bgRaised: "#2c313a",   // Raised/hover elements
+  bgDeep: "#232730",
+  bgCard: "#282c34",
+  bgRaised: "#313643",
   
   // Borders
-  border: "#3e4451",
-  borderDeep: "#181a1f",
+  border: "#454c5d",
+  borderDeep: "#1a1e25",
   
   // Text colors
-  dimText: "#5c6370",    // Comments/dim text
-  midText: "#abb2bf",    // Normal text
-  bright: "#e5e5e5",     // Bright/highlighted text
+  dimText: "#8d95a4",
+  midText: "#c5cbd6",
+  bright: "#e5e9f0",
   white: "#ffffff",
   
   // Accent colors
-  accent: "#61afef",     // Blue (primary accent)
-  blue: "#61afef",
-  green: "#98c379",
-  yellow: "#e5c07b",
-  orange: "#d19a66",
-  red: "#e06c75",
-  purple: "#c678dd",
-  cyan: "#56b6c2",
+  accent: "#7f9fca",
+  blue: "#7f9fca",
+  green: "#90af80",
+  yellow: "#c2ab77",
+  orange: "#bd9478",
+  red: "#b87a86",
+  purple: "#9181b2",
+  cyan: "#88afc1",
 } as const;
 
 export type Theme = typeof TH;

@@ -1,201 +1,128 @@
 # Agent Instructions (Autonomous Delivery Guide)
 
-This document is the single source of context for autonomous agents working on this repo.
-Read this file before making changes.
+Read this file and `TODO.md` before making changes.
 
 ## 1) Product Purpose
 
 The product is an educational C coding platform with:
-- Compile + run execution
-- Step tracing and visualizer
-- Terminal-style `scanf` input UX
-- Guidance-first learning roadmap (LeetCode-style practice + AI milestone coaching)
+- compile + run execution
+- step tracing and a structure-aware visualizer
+- terminal-style `scanf` input UX
+- analysis and guided practice for DSA learning
 
 Primary user type: learners who need compiler behavior and concept clarity at the same time.
 
-## 2) Branch Context and Ownership
+## 2) Branch Model
 
 Use branches with this intent:
 
-| Branch | Purpose | Notes |
-|---|---|---|
-| `main` | stable baseline | production-safe foundation |
-| `bug-fixes` | non-visualizer hardening + roadmap docs | contains editor/workflow fixes and modern UI roadmap notes |
-| `visualizer-fix` | active visualizer + analysis engineering branch | current integration branch for visualizer, analyzer, and safety improvements |
-| `beta-features` | product roadmap capture and beta planning | used to keep TODO/vision planning in sync |
+| Branch | Purpose |
+|---|---|
+| `main` | stable, validated baseline |
+| `beta` | staging and integration branch |
+| `fix` | active implementation branch |
 
-Recent known commits:
-- `main`: `5b29cde` (merge input-change-fix)
-- `bug-fixes`: `dcc211e` (roadmap expansion), `4d54c01` (workflow fixes)
-- `visualizer-fix`: `94a0ce3` (TODO roadmap sync), includes merged `main`
-- `beta-features`: `d9f3fac` (TODO roadmap sync)
+Unless explicitly told otherwise, do active work on `fix`, promote validated work to `beta`, and treat `main` as the release line.
 
-## 3) Why TODO Is Related to `beta-features`
+## 3) Current Architecture Guide
 
-`TODO.md` includes near-term engineering and beta roadmap ideas:
-- visualizer hardening
-- data safety
-- mentor/AI learning flow
-- milestone-driven problem solving
-
-This roadmap was first curated for beta planning and then cherry-picked into `visualizer-fix` to keep implementation and planning aligned.
-In short: `beta-features` is planning-first; `visualizer-fix` is implementation-first.
-
-## 4) File Map (Where to Edit What)
-
-### Frontend shell and orchestration
+### Frontend orchestration
 - `/home/karthi/cvis/src/routes/+layout.svelte`
-  - app composition
-  - compile/run and trace action wiring
+  - top-level app composition
+  - wires editor, runtime actions, trace lifecycle, and right pane
 
-### Left editor and tracing controls
-- `/home/karthi/cvis/src/lib/components/EditorPane.svelte`
-  - code editor UI
-  - trace playback controls
-  - current-line highlight and scroll sync
+### Runtime domain
+- `/home/karthi/cvis/src/lib/runtime/actions.ts`
+  - compile/run/trace orchestration
+- `/home/karthi/cvis/src/lib/api.ts`
+  - backend HTTP client
+- `/home/karthi/cvis/src/lib/stores/runtime.ts`
+  - runtime-specific store state
 
-### Right panel tabs (output/visualizer/analysis)
-- `/home/karthi/cvis/src/lib/components/RightPane.svelte`
-  - tab container and panel-level UX
-  - runtime terminal input capture in Output tab
+### Analysis domain
+- `/home/karthi/cvis/src/lib/analysis/unified-analysis.ts`
+  - unified analysis result assembly
+- `/home/karthi/cvis/src/lib/analysis/behavior-features.ts`
+  - behavior-level signal extraction
+- `/home/karthi/cvis/src/lib/analysis/behavior-classifier.ts`
+  - behavior-first classification
 
-- `/home/karthi/cvis/src/lib/components/right-pane-config.ts`
-  - tab metadata and visualizer feature tags
-
-### Visualizer renderer
+### Visualizer domain
+- `/home/karthi/cvis/src/lib/visualizer/trace-normalization.ts`
+  - normalized trace/runtime contract
+- `/home/karthi/cvis/src/lib/visualizer/render-model.ts`
+  - learner-facing render model generation
 - `/home/karthi/cvis/src/lib/components/Visualizer.svelte`
-  - stack/list/array rendering
-  - trace-step rendering rules
-  - intent-to-mode routing
+  - visualizer composition root
+- `/home/karthi/cvis/src/lib/components/visualizer/`
+  - structure-specific renderers
 
-### Run + trace logic
-- `/home/karthi/cvis/src/lib/layout/run-actions.ts`
-  - compile/run session lifecycle
-  - trace request + initial-step selection
-  - stdin/EOF/interrupt runtime behavior
+### Right pane shell
+- `/home/karthi/cvis/src/lib/components/RightPane.svelte`
+  - shell only
+- `/home/karthi/cvis/src/lib/components/right-pane/`
+  - panel implementations
+- `/home/karthi/cvis/src/lib/app-shell/right-pane/view-models.ts`
+  - right-pane view-model shaping
 
-### Shared state
-- `/home/karthi/cvis/src/lib/stores.ts`
-  - svelte stores for editor/runtime/visualizer
-  - right-pane tab + learning/progress + sync safety stores
-
-### Program intent and code-type analysis
-- `/home/karthi/cvis/src/lib/visualizer/program-intent.ts`
-  - lightweight intent classifier (CPU-light)
-
-- `/home/karthi/cvis/src/lib/analysis/code-type-finder.ts`
-  - section-level type analysis
-  - intent bands
-  - LeetCode-style recommendation mapping + milestones
-
-### Server runtime/compiler implementation
-- `/home/karthi/cvis/server/lib/c-interpreter.js`
+### Backend runtime/compiler implementation
+- `/home/karthi/cvis/server/index.ts`
+  - server startup and transport mode
+- `/home/karthi/cvis/server/app.ts`
+  - middleware composition and route registration
+- `/home/karthi/cvis/server/lib/http/`
+  - request validation, response shaping, security middleware
 - `/home/karthi/cvis/server/lib/compile-c.js`
+  - GCC compilation service
 - `/home/karthi/cvis/server/lib/run-binary.js`
-- `/home/karthi/cvis/server/lib/gcc-path.js`
+  - one-shot binary execution
 - `/home/karthi/cvis/server/lib/run-session.js`
+  - interactive runtime sessions
+- `/home/karthi/cvis/server/lib/c-interpreter.js`
+  - trace execution
+- `/home/karthi/cvis/server/lib/trace/`
+  - trace helpers and error normalization
 
-## 5) Active TODO Priorities
+## 4) Active Engineering Priorities
 
 Read `/home/karthi/cvis/TODO.md`.
 
 Priority order:
-1. Visualizer Fix + UX
-2. Input + terminal behavior edge cases
-3. Data Safety (No Data Loss)
-4. Mentor/AI workflow
+1. execution isolation hardening
+2. behavior-first code finder improvements
+3. family-specific visualizer playback
+4. teacher / mentor workflow foundation
 
-## 6) Current Engineering Direction (Important)
+## 5) Delivery Rules
 
-When implementing "code type finder":
-- Do section-level detection (not just full-file classification)
-- Use lightweight CPU-safe analysis (rule-based + scoring)
-- Do not add heavy models that hurt responsiveness
-- Map type to curated LeetCode-style practice recommendations
-- Provide milestone steps per recommended problem
-- Render analysis in an engaging, animated but readable UI
+1. Confirm current branch and uncommitted state with `git status`.
+2. Implement one vertical slice at a time.
+3. Keep runtime, analysis, and visualizer responsibilities separated.
+4. Run `npm run lint` and `npm run build` after each meaningful slice.
+5. Update `TODO.md`, `CODEBASE.md`, or `IMPLEMENTATION_ROADMAP.md` when architecture or priorities materially change.
+6. Use scoped commit messages and avoid mixing unrelated concerns.
 
-When implementing "data safety":
-- Autosave continuously
-- Restore user session after reload
-- Keep local backup snapshots for offline recovery
-- Add conflict recovery hooks/UI for future server sync
-
-## 7) Autonomous Implementation Playbook
-
-Follow this exact order for autonomous execution:
-
-1. Read `TODO.md` and this file.
-2. Confirm current branch and uncommitted state with `git status`.
-3. Implement one vertical slice at a time:
-   - state/store updates
-   - logic modules
-   - UI integration
-   - styles/animations
-4. Run `npm run lint` and `npm run build` after each slice.
-5. Update `TODO.md` checkboxes only when feature is truly working.
-6. Commit scoped changes with clear messages.
-
-## 8) Definition of Done (Per Feature)
-
-### Visualizer hardening done when:
-- trace starts from executable frame (not global-only)
-- highlighted line and viewport stay aligned
-- empty/partial trace states do not break UI
-
-### Analyzer/type finder done when:
-- each function/global section has intent label + confidence
-- intent bands are visible in Analysis tab
-- at least 3 recommended LeetCode-style problems shown
-- each recommendation includes milestone checklist
-
-### Data safety done when:
-- code survives reload
-- backup snapshots are created and recoverable
-- conflict banner appears when competing draft is detected
-
-## 9) Testing Checklist (must run)
+## 6) Testing Checklist
 
 From `/home/karthi/cvis`:
 - `npm run lint`
 - `npm run build`
+- `npm run doctor`
 
-Manual verification:
-- compile and run in Output tab
+When backend/runtime behavior changes, also run:
+- `npm run test:backend`
+- `npm run smoke:prod`
+
+Manual verification when relevant:
+- compile and run in the Console tab
 - `scanf` input behaves terminal-like
-- trace step playback works
-- analysis tab updates live with code changes
-- reload page and confirm draft recovery
+- trace playback stays coherent
+- analysis stays stable while code changes
 
-## 10) Commit Conventions
+## 7) Notes on Generated / Local Files
 
-Use scoped commit messages:
-- `feat(analysis): ...`
-- `feat(persistence): ...`
-- `fix(visualizer): ...`
-- `docs(instructions): ...`
-
-Do not mix unrelated concerns in one commit.
-
-## 11) Notes on Unwanted Files
-
-Safe-to-delete generated artifacts:
+Generated artifacts and local runtime logs should not be committed:
 - `.svelte-kit/`
 - `dist/`
 - `vite.config.ts.timestamp-*.mjs`
-
-Do not delete source, config, or roadmap docs unless explicitly requested.
-
-## 12) Current In-Progress Surface (`visualizer-fix`)
-
-At the time of writing, active implementation work is centered around:
-- `/home/karthi/cvis/src/lib/components/RightPane.svelte`
-- `/home/karthi/cvis/src/lib/components/Visualizer.svelte`
-- `/home/karthi/cvis/src/lib/components/EditorPane.svelte`
-- `/home/karthi/cvis/src/lib/layout/run-actions.ts`
-- `/home/karthi/cvis/src/lib/stores.ts`
-- `/home/karthi/cvis/src/lib/analysis/code-type-finder.ts`
-- `/home/karthi/cvis/src/lib/visualizer/program-intent.ts`
-- `/home/karthi/cvis/TODO.md`
-
-If an agent resumes this branch, start by validating these files first, then run lint/build, then continue with TODO priorities.
+- root `*.log` debug outputs such as `.backend*.log`, `.frontend*.log`, `.devall*.log`

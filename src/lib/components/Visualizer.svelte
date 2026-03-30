@@ -11,6 +11,7 @@
   import PointerMapView from '$lib/components/visualizer/PointerMapView.svelte';
   import StructBlocksView from '$lib/components/visualizer/StructBlocksView.svelte';
   import TreeView from '$lib/components/visualizer/TreeView.svelte';
+  import { inertialScroll } from '$lib/shared/inertial-scroll';
   import { currentStepIndex, editorCode, isPlaying, runSessionId, traceSteps } from '$lib/stores';
   import type { TraceStep } from '$lib/types';
   import { buildVisualizerRenderModel } from '$lib/visualizer/render-model';
@@ -21,65 +22,11 @@
   $: renderModel = buildVisualizerRenderModel(traceStep, previousTraceStep, $editorCode);
 
   let playInterval: number | null = null;
-  let scrollRef: HTMLDivElement | null = null;
-  let smoothScrollFrame: number | null = null;
-  let smoothScrollTarget = 0;
-  let smoothScrollVelocity = 0;
 
   function confidenceClass(confidence: number): string {
     if (confidence >= 0.8) return 'confidence-high';
     if (confidence >= 0.6) return 'confidence-medium';
     return 'confidence-low';
-  }
-
-  function clampScrollTarget(next: number): number {
-    if (!scrollRef) return 0;
-    const maxScroll = Math.max(0, scrollRef.scrollHeight - scrollRef.clientHeight);
-    return Math.max(0, Math.min(maxScroll, next));
-  }
-
-  function stopSmoothScroll() {
-    if (smoothScrollFrame !== null) {
-      cancelAnimationFrame(smoothScrollFrame);
-      smoothScrollFrame = null;
-    }
-  }
-
-  function animateSmoothScroll() {
-    if (!scrollRef) {
-      stopSmoothScroll();
-      return;
-    }
-
-    const current = scrollRef.scrollTop;
-    const delta = smoothScrollTarget - current;
-    smoothScrollVelocity = smoothScrollVelocity * 0.72 + delta * 0.16;
-
-    if (Math.abs(delta) < 0.5 && Math.abs(smoothScrollVelocity) < 0.5) {
-      scrollRef.scrollTop = smoothScrollTarget;
-      smoothScrollVelocity = 0;
-      stopSmoothScroll();
-      return;
-    }
-
-    scrollRef.scrollTop = clampScrollTarget(current + smoothScrollVelocity);
-    smoothScrollFrame = requestAnimationFrame(animateSmoothScroll);
-  }
-
-  function handleVizWheel(event: WheelEvent) {
-    if (!scrollRef || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
-      return;
-    }
-
-    event.preventDefault();
-    const baseline = smoothScrollFrame === null ? scrollRef.scrollTop : smoothScrollTarget;
-    const dampedDelta = event.deltaY * 0.72;
-    smoothScrollTarget = clampScrollTarget(baseline + dampedDelta);
-
-    if (smoothScrollFrame === null) {
-      smoothScrollVelocity = 0;
-      smoothScrollFrame = requestAnimationFrame(animateSmoothScroll);
-    }
   }
 
   $: {
@@ -105,7 +52,6 @@
     if (playInterval !== null) {
       clearInterval(playInterval);
     }
-    stopSmoothScroll();
     isPlaying.set(false);
   });
 </script>
@@ -127,7 +73,7 @@
     </div>
   </div>
 
-  <div bind:this={scrollRef} class="viz-scroll" on:wheel={handleVizWheel}>
+  <div use:inertialScroll class="viz-scroll">
     {#if !traceStep}
       <div class="empty-state">
         <div class="empty-title">Ready to visualize</div>
@@ -239,12 +185,8 @@
     display: flex;
     flex-direction: column;
     background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--bg-card) 92%, var(--bg-deep)) 0%,
-        color-mix(in srgb, var(--bg-deep) 88%, #000 12%) 100%
-      ),
-      radial-gradient(circle at top right, color-mix(in srgb, var(--blue) 14%, transparent), transparent 42%);
+      radial-gradient(circle at top right, color-mix(in srgb, var(--selection-accent) 6%, transparent), transparent 32%),
+      linear-gradient(180deg, var(--bg-card) 0%, var(--bg-deep) 100%);
     color: var(--text-bright);
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
   }
@@ -254,9 +196,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 12px 14px;
-    background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+    padding: 14px 16px;
+    background: color-mix(in srgb, var(--bg-deep) 94%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   }
 
   .viz-title {
@@ -282,15 +224,15 @@
     align-items: flex-start;
     gap: 10px;
     padding: 10px 12px;
-    border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--flow-color) 30%, #1e2d4a);
-    background: color-mix(in srgb, var(--flow-color) 10%, #0f1629);
+    border-radius: var(--radius-panel);
+    border: 1px solid color-mix(in srgb, var(--flow-color) 24%, var(--border));
+    background: color-mix(in srgb, var(--flow-color) 8%, var(--bg-raised));
   }
 
   .flow-badge {
     margin-top: 1px;
     padding: 2px 7px;
-    border-radius: 999px;
+    border-radius: var(--radius-chip);
     background: color-mix(in srgb, var(--flow-color) 18%, transparent);
     color: var(--flow-color);
     font-size: 9px;
@@ -311,7 +253,7 @@
     flex-direction: column;
     gap: 4px;
     padding: 10px 12px;
-    border-radius: 10px;
+    border-radius: var(--radius-panel);
     border: 1px solid color-mix(in srgb, var(--text-mid) 22%, transparent);
     background: color-mix(in srgb, var(--text-mid) 8%, transparent);
   }
@@ -329,10 +271,10 @@
   }
 
   .intent-pill {
-    border-radius: 999px;
+    border-radius: var(--radius-chip);
     border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-    background: color-mix(in srgb, var(--bg-raised) 84%, var(--bg-deep));
-    padding: 4px 10px;
+    background: color-mix(in srgb, var(--bg-raised) 88%, var(--bg-deep));
+    padding: 5px 10px;
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.02em;
@@ -354,31 +296,32 @@
   .play-indicator {
     width: 9px;
     height: 9px;
-    border-radius: 999px;
+    border-radius: 5px;
     background: color-mix(in srgb, var(--text-dim) 75%, var(--border));
   }
 
   .play-indicator.play-live {
     background: var(--green);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--green) 45%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--green) 26%, transparent);
   }
 
   .viz-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 14px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 14px;
     scroll-behavior: smooth;
     overscroll-behavior: contain;
+    scrollbar-gutter: stable;
     background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--cyan) 5%, transparent), transparent 30%),
       linear-gradient(
         180deg,
-        color-mix(in srgb, var(--bg-card) 70%, var(--bg-deep)) 0%,
-        color-mix(in srgb, var(--bg-deep) 92%, #000 8%) 100%
-      ),
-      radial-gradient(circle at top left, color-mix(in srgb, var(--blue) 10%, transparent), transparent 40%);
+        color-mix(in srgb, var(--bg-card) 98%, transparent) 0%,
+        color-mix(in srgb, var(--bg-deep) 90%, var(--bg-card)) 100%
+      );
   }
 
   .empty-state {
@@ -439,10 +382,10 @@
 
   .tag {
     padding: 4px 9px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--blue) 28%, transparent);
-    background: color-mix(in srgb, var(--blue) 8%, transparent);
-    color: color-mix(in srgb, var(--blue) 88%, #ffffff 12%);
+    border-radius: var(--radius-chip);
+    border: 1px solid color-mix(in srgb, var(--selection-accent) 24%, transparent);
+    background: color-mix(in srgb, var(--selection-accent) 8%, transparent);
+    color: color-mix(in srgb, var(--lavender) 42%, var(--text-bright));
     font-size: 10px;
     font-weight: 700;
   }
@@ -469,7 +412,7 @@
   .array-card,
   .frame-card,
   .tree-card {
-    border-radius: 10px;
+    border-radius: var(--radius-card);
     border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
     background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
   }
@@ -508,8 +451,8 @@
   }
 
   .frame-card.frame-active {
-    border-color: color-mix(in srgb, var(--blue) 48%, var(--border));
-    box-shadow: 0 0 18px color-mix(in srgb, var(--blue) 16%, transparent);
+    border-color: color-mix(in srgb, var(--blue) 34%, var(--border));
+    box-shadow: 0 0 14px color-mix(in srgb, var(--blue) 10%, transparent);
   }
 
   .frame-head,
@@ -565,7 +508,7 @@
 
   .pointer-chip {
     padding: 4px 8px;
-    border-radius: 999px;
+    border-radius: var(--radius-chip);
     border: 1px solid color-mix(in srgb, var(--cyan) 34%, transparent);
     background: color-mix(in srgb, var(--cyan) 10%, transparent);
     color: var(--cyan);
@@ -581,8 +524,8 @@
   }
 
   .var-card.var-changed {
-    border-color: color-mix(in srgb, var(--blue) 48%, var(--border));
-    background: color-mix(in srgb, var(--blue) 12%, var(--bg-raised));
+    border-color: color-mix(in srgb, var(--blue) 34%, var(--border));
+    background: color-mix(in srgb, var(--blue) 8%, var(--bg-raised));
   }
 
   .var-empty {
@@ -603,7 +546,7 @@
   .linear-cell {
     min-width: 54px;
     padding: 8px 10px;
-    border-radius: 8px;
+    border-radius: var(--radius-control);
     border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
     background: color-mix(in srgb, var(--bg-card) 70%, var(--bg-deep));
     display: flex;
@@ -625,7 +568,7 @@
     gap: 8px;
     flex-wrap: wrap;
     padding: 10px 12px;
-    border-radius: 10px;
+    border-radius: var(--radius-card);
     border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
     background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
   }
@@ -638,8 +581,8 @@
 
   .linked-struct-card {
     min-width: 132px;
-    border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--blue) 34%, var(--border));
+    border-radius: var(--radius-card);
+    border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--border));
     background: color-mix(in srgb, var(--bg-raised) 88%, var(--bg-deep));
     overflow: hidden;
   }
@@ -651,7 +594,7 @@
     gap: 8px;
     padding: 8px 10px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-    background: color-mix(in srgb, var(--blue) 10%, transparent);
+    background: color-mix(in srgb, var(--blue) 7%, transparent);
   }
 
   .linked-struct-title,
@@ -721,8 +664,8 @@
   }
 
   .struct-block {
-    border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--purple) 28%, var(--border));
+    border-radius: var(--radius-card);
+    border: 1px solid color-mix(in srgb, var(--purple) 22%, var(--border));
     background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
     overflow: hidden;
   }
@@ -738,7 +681,7 @@
     gap: 10px;
     padding: 10px 12px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-    background: color-mix(in srgb, var(--purple) 9%, transparent);
+    background: color-mix(in srgb, var(--purple) 7%, transparent);
   }
 
   .struct-head-copy,
@@ -820,7 +763,7 @@
   }
 
   .graph-card {
-    border-radius: 10px;
+    border-radius: var(--radius-card);
     border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
     background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
     padding: 12px;
@@ -859,7 +802,7 @@
 
   .graph-node-chip,
   .graph-edge-chip {
-    border-radius: 999px;
+    border-radius: var(--radius-chip);
     border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
     background: color-mix(in srgb, var(--bg-card) 76%, var(--bg-deep));
     color: var(--text-bright);
@@ -886,7 +829,7 @@
 
   .pointer-ref-item {
     padding: 6px 10px;
-    border-radius: 999px;
+    border-radius: var(--radius-chip);
     border: 1px solid color-mix(in srgb, var(--cyan) 28%, transparent);
     background: color-mix(in srgb, var(--cyan) 8%, transparent);
     color: var(--cyan);
@@ -900,6 +843,7 @@
     background: color-mix(in srgb, var(--bg-deep) 92%, transparent);
     color: color-mix(in srgb, var(--text-mid) 80%, var(--text-dim));
     font-size: 10px;
+    border-radius: 0 0 var(--radius-card) var(--radius-card);
   }
 
   .viz-footer-note span {

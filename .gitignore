@@ -1,6 +1,5 @@
 # Node
 node_modules/
-Visualizer/
 # Build output
 dist/
 build/
@@ -15,6 +14,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+/.npm-cache/
+/*.log
 
 # TypeScript
 *.tsbuildinfo
@@ -31,12 +32,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-# wasm build artifacts
-public/wasm/*.wasm
-public/wasm/*.mem
-
 # Temporary
 *.tmp
 *.temp
 .cvis-toolchain/
 .vercel
+.cvis-devcert/

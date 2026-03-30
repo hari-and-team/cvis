@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import type { TraceStep } from '$lib/types';
   import {
     activeMilestoneIndex,
@@ -15,6 +15,7 @@
     runConsoleTranscript,
     runSessionId,
     selectedPracticeProblemId,
+    traceInputDraft,
     userProfile
   } from '$lib/stores';
   import { analyzeUnifiedProgram } from '$lib/analysis/unified-analysis';
@@ -36,6 +37,7 @@
     sendRuntimeEof,
     sendRuntimeInputLine
   } from '$lib/runtime/actions';
+  import { nativeExecutionEnabledStore } from '$lib/runtime-capabilities';
   import { RIGHT_PANE_TABS } from './right-pane-config';
   import './right-pane/panels.css';
   import ConsolePanel from './right-pane/ConsolePanel.svelte';
@@ -48,10 +50,6 @@
   export let isTracing = false;
   export let traceErr: string | null = null;
   export let traceNotice: string | null = null;
-
-  const dispatch = createEventDispatcher<{
-    trace: void;
-  }>();
 
   let prevMentorProblemId: string | null = null;
   const intentExplainer = createIntentExplainerController();
@@ -90,19 +88,23 @@
     lastCompileResult: $lastCompileResult,
     lastExecutionResult: $lastExecutionResult,
     canSendToStdin,
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
     workspaceError: $errorMessage
   });
   $: visualizerViewModel = buildVisualizerViewModel({
     editorCode: $editorCode,
     runConsoleTranscript: $runConsoleTranscript,
+    runSessionId: $runSessionId,
     lastExecutionResult: $lastExecutionResult,
     lastCompileResult: $lastCompileResult,
     lastRunInputTranscript: $lastRunInputTranscript,
+    manualTraceInput: $traceInputDraft,
     pendingRunInputEcho: $pendingRunInputEcho,
     traceSteps,
     currentTraceStepData,
     isTracing,
     traceErr,
+    nativeExecutionEnabled: $nativeExecutionEnabledStore,
     traceNotice
   });
   $: analysisViewModel = buildAnalysisViewModel({
@@ -210,10 +212,6 @@
   ): number {
     return getFirstIncompleteMilestoneIndex($milestoneProgress, recommendation);
   }
-
-  function triggerTrace() {
-    dispatch('trace');
-  }
 </script>
 
 <div class="right-pane">
@@ -244,7 +242,7 @@
     {/if}
 
     {#if $rightPaneTab === 'visualizer'}
-      <VisualizerPanel viewModel={visualizerViewModel} onTrace={triggerTrace} />
+      <VisualizerPanel viewModel={visualizerViewModel} />
     {/if}
 
     {#if $rightPaneTab === 'analysis'}
