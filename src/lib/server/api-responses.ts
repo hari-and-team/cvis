@@ -1,4 +1,6 @@
 import { json, type RequestEvent } from '@sveltejs/kit';
+import { env as publicEnv } from '$env/dynamic/public';
+import { normalizeApiBase, resolveExecutionMode } from '$lib/execution-mode';
 
 export const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE =
   'Compile and live run are disabled in this deployment. Use Trace Execution and Analysis, or connect an external backend for GCC-based execution.';
@@ -70,12 +72,20 @@ export function unsupportedRunSessionResponse(status = 501) {
 }
 
 export function healthPayload(event: RequestEvent) {
+  const apiBase = normalizeApiBase(publicEnv.PUBLIC_API_BASE);
+  const executionMode = resolveExecutionMode({
+    explicitMode: publicEnv.PUBLIC_EXECUTION_MODE,
+    apiBase,
+    dev: !process.env.VERCEL && process.env.NODE_ENV !== 'production'
+  });
+
   return {
     status: 'ok',
-    executionMode: 'trace-only',
-    supportsCompileRun: false,
+    executionMode,
+    supportsCompileRun: executionMode === 'full',
     supportsTrace: true,
     supportsAnalysis: true,
+    apiBase: apiBase || null,
     requestProtocol: event.url.protocol.replace(/:$/, ''),
     environment: process.env.VERCEL ? 'vercel' : process.env.NODE_ENV || 'unknown',
     timestamp: new Date().toISOString()

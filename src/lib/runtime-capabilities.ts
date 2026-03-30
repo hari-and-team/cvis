@@ -1,28 +1,18 @@
 import { env } from '$env/dynamic/public';
 import { derived, get, writable } from 'svelte/store';
-
-export type ExecutionMode = 'full' | 'trace-only';
-
-function normalizeExecutionMode(value: string | undefined): ExecutionMode | null {
-  if (value === 'full' || value === 'trace-only') {
-    return value;
-  }
-
-  return null;
-}
+import {
+  normalizeApiBase,
+  normalizeExecutionMode,
+  resolveExecutionMode,
+  type ExecutionMode
+} from '$lib/execution-mode';
 
 function getConfiguredExecutionMode(): ExecutionMode {
-  const explicitMode = normalizeExecutionMode(env.PUBLIC_EXECUTION_MODE?.trim());
-  if (explicitMode) {
-    return explicitMode;
-  }
-
-  const apiBase = (env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || '').trim();
-  if (import.meta.env.DEV || apiBase) {
-    return 'full';
-  }
-
-  return 'trace-only';
+  return resolveExecutionMode({
+    explicitMode: env.PUBLIC_EXECUTION_MODE,
+    apiBase: normalizeApiBase(env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || ''),
+    dev: import.meta.env.DEV
+  });
 }
 
 export const executionMode = writable<ExecutionMode>(getConfiguredExecutionMode());
