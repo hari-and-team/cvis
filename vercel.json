@@ -3,9 +3,6 @@
   "functions": {
     "api/[[...path]].ts": {
       "maxDuration": 60
-    },
-    "health.ts": {
-      "maxDuration": 60
     }
   }
 }
