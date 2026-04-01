@@ -729,6 +729,7 @@
   .execution-dock {
     flex-shrink: 0;
     width: 100%;
+    
     padding: 8px 12px 12px;
     background:
       linear-gradient(180deg, rgba(40, 44, 52, 0.96) 0%, rgba(33, 37, 43, 0.98) 100%);
