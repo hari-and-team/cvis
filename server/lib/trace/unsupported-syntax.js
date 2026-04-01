@@ -3,12 +3,6 @@ import { createTraceFailure } from './trace-errors.js';
 
 const UNSUPPORTED_TRACE_FEATURES = [
   {
-    code: 'do-while',
-    regex: /\bdo\s*\{/,
-    message:
-      'Trace does not support do/while loops yet. Use a while loop for tracing or use compile/run for exact execution.'
-  },
-  {
     code: 'ternary',
     regex: /\?/,
     message: 'Trace does not support ternary expressions yet. Rewrite them as if/else for tracing.'
