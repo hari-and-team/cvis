@@ -514,10 +514,10 @@ function toNextLabel(value: unknown): string | null {
   return '{...}';
 }
 
-function parseLinkedNodes(memory: Record<string, unknown>): VisualizerLinkedNode[] {
+function parseLinkedNodes(structureMemory: Record<string, unknown>): VisualizerLinkedNode[] {
   const nodes: VisualizerLinkedNode[] = [];
 
-  for (const [key, value] of Object.entries(memory)) {
+  for (const [key, value] of Object.entries(structureMemory)) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       continue;
     }
@@ -1041,10 +1041,12 @@ function pickFallbackReason(
 export function normalizeTraceStep(traceStep: TraceStep | null): NormalizedTraceState {
   const { memory, globalFrame, stackFrames, heap } = resolveTraceRuntimeContract(traceStep);
   const arrays = parseArrays(memory);
-  const linkedNodes = parseLinkedNodes(memory);
   const memoryEntries = normalizeMemoryEntries(memory);
   const heapEntries = normalizeMemoryEntries(heap);
   const structureEntries = mergeMemoryEntries(heapEntries, memoryEntries);
+  const linkedNodes = parseLinkedNodes(
+    Object.fromEntries(structureEntries.map((entry) => [entry.key, entry.value]))
+  );
   const linkedLists = buildLinkedLists(linkedNodes);
   const trees = buildTrees(structureEntries);
   const structBlocks = [

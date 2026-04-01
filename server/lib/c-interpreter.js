@@ -453,6 +453,7 @@ class Parser {
 
     if (t.value === '{') return this.parseBlock();
     if (t.value === 'if') return this.parseIf();
+    if (t.value === 'do') return this.parseDoWhile();
     if (t.value === 'while') return this.parseWhile();
     if (t.value === 'for') return this.parseFor();
     if (t.value === 'switch') return this.parseSwitch();
@@ -492,6 +493,18 @@ class Parser {
     this.expect('OP', ')');
     const body = this.parseStatement();
     return { type: 'While', condition, body, line };
+  }
+
+  parseDoWhile() {
+    const line = this.peek().line;
+    this.expect('KW', 'do');
+    const body = this.parseStatement();
+    this.expect('KW', 'while');
+    this.expect('OP', '(');
+    const condition = this.parseExpression();
+    this.expect('OP', ')');
+    this.match('OP', ';');
+    return { type: 'DoWhile', condition, body, line };
   }
 
   parseFor() {
@@ -1287,6 +1300,25 @@ class Interpreter {
           if (this.breakFlag) { this.breakFlag = false; break; }
           if (this.continueFlag) { this.continueFlag = false; continue; }
           if (this.returnValue !== null) break;
+        }
+        return;
+      }
+
+      case 'DoWhile': {
+        while (true) {
+          this.execute(node.body);
+          if (this.breakFlag) {
+            this.breakFlag = false;
+            break;
+          }
+          if (this.returnValue !== null) break;
+
+          this.recordStep(node.line, `do/while condition`);
+          const shouldContinue = this.evaluate(node.condition);
+          if (this.continueFlag) {
+            this.continueFlag = false;
+          }
+          if (!shouldContinue) break;
         }
         return;
       }
