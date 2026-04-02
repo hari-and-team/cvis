@@ -12,6 +12,10 @@ import {
   traceValidationResponse
 } from '../../../../server/lib/http/route-responses';
 
+export const config = {
+  maxDuration: 60
+};
+
 export const POST: RequestHandler = async ({ request }) => {
   const bodyResult = await readJsonObject(request);
   if ('error' in bodyResult) {
