@@ -82,5 +82,15 @@ export function nativeExecutionEnabled(): boolean {
 }
 
 export function nativeExecutionUnavailableMessage(): string {
+  const configuredApiBase = getConfiguredApiBase();
+
+  if (!configuredApiBase && import.meta.env.PROD) {
+    return 'Compile and live run are unavailable because no external execution backend is configured for this deployment. Set PUBLIC_API_BASE to a GCC-capable backend service.';
+  }
+
+  if (configuredApiBase) {
+    return 'Compile and live run are unavailable because the configured external execution backend is unreachable or does not currently support GCC execution.';
+  }
+
   return 'Compile and live run are unavailable because the configured execution backend does not currently support GCC execution.';
 }
