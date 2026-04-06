@@ -2,9 +2,12 @@ import { DEV_CORS_ORIGINS } from '../../config/constants.js';
 import type { NextLike, RequestLike, ResponseLike } from './http-types.js';
 
 type CorsSettings = {
-  origin: boolean | string | string[];
+  origin: boolean | string | string[] | CorsOriginResolver;
   credentials: boolean;
 };
+
+type CorsOriginCallback = (error: Error | null, origin?: boolean | string) => void;
+type CorsOriginResolver = (origin: string | undefined, callback: CorsOriginCallback) => void;
 
 type RateLimitPolicy = {
   limit: number;
@@ -32,13 +35,59 @@ type RateLimitBucket = {
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
 let nextRateLimitPruneAt = 0;
 
-function parseExplicitOrigins(): string[] {
+function parseEnvList(name: string): string[] {
   return (
-    process.env.CORS_ORIGINS
+    process.env[name]
       ?.split(',')
       .map((value) => value.trim())
       .filter(Boolean) ?? []
   );
+}
+
+function normalizeOrigin(origin: string): string {
+  return origin.trim().replace(/\/$/, '');
+}
+
+function parseExplicitOrigins(): string[] {
+  return parseEnvList('CORS_ORIGINS').map(normalizeOrigin);
+}
+
+function parseCorsOriginPatterns(): RegExp[] {
+  return parseEnvList('CORS_ORIGIN_PATTERNS').flatMap((pattern) => {
+    try {
+      return [new RegExp(pattern)];
+    } catch {
+      console.warn(`Ignoring invalid CORS_ORIGIN_PATTERNS entry: ${pattern}`);
+      return [];
+    }
+  });
+}
+
+function uniqueOrigins(origins: string[]): string[] {
+  return Array.from(new Set(origins.map(normalizeOrigin).filter(Boolean)));
+}
+
+function createCorsOriginResolver(
+  allowedOrigins: string[],
+  allowedPatterns: RegExp[]
+): CorsOriginResolver {
+  return (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (
+      allowedOrigins.includes(normalizedOrigin) ||
+      allowedPatterns.some((pattern) => pattern.test(normalizedOrigin))
+    ) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, false);
+  };
 }
 
 function isLocalHost(hostname: string): boolean {
@@ -135,6 +184,7 @@ function resolveRateLimitKey(req: RequestLike): string {
 
 export function resolveCorsSettings(): CorsSettings {
   const explicitOrigins = parseExplicitOrigins();
+  const originPatterns = parseCorsOriginPatterns();
 
   if (explicitOrigins.includes('*')) {
     return {
@@ -143,18 +193,31 @@ export function resolveCorsSettings(): CorsSettings {
     };
   }
 
-  if (explicitOrigins.length > 0) {
+  if (explicitOrigins.length > 0 || originPatterns.length > 0) {
+    const origins = uniqueOrigins(explicitOrigins);
     return {
-      origin: explicitOrigins.length === 1 ? explicitOrigins[0] : explicitOrigins,
+      origin:
+        originPatterns.length > 0
+          ? createCorsOriginResolver(origins, originPatterns)
+          : origins.length === 1
+            ? origins[0]
+            : origins,
       credentials: true
     };
   }
 
   if (process.env.NODE_ENV === 'production') {
-    const frontendUrl = process.env.FRONTEND_URL?.trim();
+    const frontendOrigins = uniqueOrigins(parseEnvList('FRONTEND_URL'));
+    const origin =
+      frontendOrigins.length === 1
+        ? frontendOrigins[0]
+        : frontendOrigins.length > 1
+          ? frontendOrigins
+          : false;
+
     return {
-      origin: frontendUrl || false,
-      credentials: Boolean(frontendUrl)
+      origin,
+      credentials: frontendOrigins.length > 0
     };
   }
 
