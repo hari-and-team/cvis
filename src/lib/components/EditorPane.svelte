@@ -220,8 +220,12 @@
     }
   }
 
-  function handleCodeChange() {
-    $editorCode = code;
+  function handleCodeChange(event: Event) {
+    const nextCode =
+      event.currentTarget instanceof HTMLTextAreaElement ? event.currentTarget.value : code;
+
+    code = nextCode;
+    $editorCode = nextCode;
     isPlaying.set(false);
     currentStepIndex.set(0);
     traceSteps.set([]);
