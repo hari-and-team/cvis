@@ -273,7 +273,7 @@
       >{@html highlight(code)}</pre>
       <textarea
         bind:this={taRef}
-        bind:value={code}
+        value={code}
         on:input={handleCodeChange}
         on:keydown={onKey}
         on:scroll={syncScroll}

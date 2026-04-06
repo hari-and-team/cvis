@@ -7,6 +7,23 @@
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
+    <script>
+      globalThis.runInterpreter =
+        globalThis.runInterpreter ||
+        (async function runInterpreter(code, breakpoints = []) {
+          const response = await fetch('/api/trace', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: String(code || ''), breakpoints })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Trace failed (${response.status})`);
+          }
+
+          return response.json();
+        });
+    </script>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
