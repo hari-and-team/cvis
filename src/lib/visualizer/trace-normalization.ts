@@ -102,6 +102,7 @@ export interface VisualizerLinearStructure {
 export interface VisualizerGraphNode {
   id: string;
   label: string;
+  visited: boolean;
 }
 
 export interface VisualizerGraphEdge {
@@ -981,18 +982,161 @@ function toGraphNeighbors(value: unknown): string[] {
   return [];
 }
 
+function graphKeyLooksRelevant(key: string): boolean {
+  const baseName = key.split('.').at(-1)?.trim() ?? key;
+  return /^(?:adj|graph|edges?|neighbors?|neighbours?)$/i.test(baseName) ||
+    /(?:adjacency|adjmatrix|adjlist|edge(?:list)?|neighbors?|neighbours?)/i.test(baseName);
+}
+
+function toNumericIndexedEntries(value: unknown): Array<[number, unknown]> {
+  if (Array.isArray(value)) {
+    return value.map((entry, index): [number, unknown] => [index, entry]);
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return [];
+  }
+
+  return Object.entries(record)
+    .filter(([key]) => /^\d+$/.test(key))
+    .map(([key, entry]): [number, unknown] => [Number.parseInt(key, 10), entry])
+    .sort((left, right) => left[0] - right[0]);
+}
+
+function toIndexedArray(value: unknown): unknown[] {
+  const entries = toNumericIndexedEntries(value);
+  if (entries.length === 0) {
+    return [];
+  }
+
+  const values: unknown[] = [];
+  for (const [index, entry] of entries) {
+    values[index] = entry;
+  }
+  return values;
+}
+
+function entryBaseName(key: string): string {
+  return key.split('.').at(-1)?.trim().toLowerCase() ?? key.toLowerCase();
+}
+
+function entryScopePrefix(key: string): string {
+  const lastDotIndex = key.lastIndexOf('.');
+  return lastDotIndex >= 0 ? key.slice(0, lastDotIndex + 1) : '';
+}
+
+function findCompanionEntry(
+  entries: VisualizerMemoryEntry[],
+  graphKey: string,
+  companionNames: string[]
+): VisualizerMemoryEntry | null {
+  const scopePrefix = entryScopePrefix(graphKey);
+  const wanted = new Set(companionNames.map((name) => name.toLowerCase()));
+  const scoped = entries.find(
+    (entry) => entry.key.startsWith(scopePrefix) && wanted.has(entryBaseName(entry.key))
+  );
+
+  if (scoped) {
+    return scoped;
+  }
+
+  return entries.find((entry) => wanted.has(entryBaseName(entry.key))) ?? null;
+}
+
+function findIndexedCompanionValues(
+  entries: VisualizerMemoryEntry[],
+  graphKey: string,
+  companionNames: string[]
+): unknown[] {
+  const companion = findCompanionEntry(entries, graphKey, companionNames);
+  return companion ? toIndexedArray(companion.value) : [];
+}
+
+function indexedCompanionTruth(values: unknown[], id: string): boolean {
+  const numericId = Number(id);
+  if (Number.isInteger(numericId) && numericId >= 0) {
+    return Boolean(values[numericId]);
+  }
+
+  return false;
+}
+
+function rowLooksBinary(row: unknown[]): boolean {
+  return row.every(
+    (cell) =>
+      typeof cell === 'boolean' ||
+      (typeof cell === 'number' && Number.isInteger(cell) && (cell === 0 || cell === 1))
+  );
+}
+
+function rowsLookLikeAdjacencyMatrix(rows: unknown[][]): boolean {
+  return rows.length > 0 &&
+    rows.every((row) => row.length === rows.length && rowLooksBinary(row));
+}
+
+function rowsLookLikeEdgePairs(key: string, rows: unknown[][]): boolean {
+  if (!/edges?|edgelist/i.test(entryBaseName(key))) {
+    return false;
+  }
+
+  return rows.length > 0 &&
+    rows.every((row) => row.length >= 2 && toGraphNodeId(row[0]) !== null && toGraphNodeId(row[1]) !== null);
+}
+
+function graphListNeighbors(row: unknown[], degree: unknown): string[] {
+  const resolvedDegree =
+    typeof degree === 'number' && Number.isInteger(degree) && degree >= 0
+      ? Math.min(degree, row.length)
+      : null;
+  const candidates =
+    resolvedDegree !== null
+      ? row.slice(0, resolvedDegree)
+      : row.filter((entry) => {
+          if (typeof entry !== 'number') {
+            return true;
+          }
+
+          return entry !== 0;
+        });
+
+  return candidates
+    .map((entry) => toGraphNodeId(entry))
+    .filter((entry): entry is string => Boolean(entry));
+}
+
 function buildGraphs(entries: VisualizerMemoryEntry[]): VisualizerGraph[] {
-  const GRAPH_KEY_PATTERN = /\b(adj|graph|edge|edges|neighbor|neighbour)\b/i;
   const graphs: VisualizerGraph[] = [];
 
   for (const entry of entries) {
-    if (!GRAPH_KEY_PATTERN.test(entry.key)) {
+    if (!graphKeyLooksRelevant(entry.key)) {
       continue;
     }
 
     const nodeSet = new Set<string>();
     const edgeSet = new Set<string>();
     const edges: VisualizerGraphEdge[] = [];
+    const degreeValues = findIndexedCompanionValues(entries, entry.key, [
+      'degree',
+      'degrees',
+      'deg',
+      'outDegree',
+      'outDegrees',
+      'neighborCount',
+      'neighborCounts',
+      'neighbourCount',
+      'neighbourCounts',
+      'adjCount',
+      'adjCounts',
+      'count',
+      'counts'
+    ]);
+    const visitedValues = findIndexedCompanionValues(entries, entry.key, [
+      'visited',
+      'seen',
+      'marked',
+      'discovered'
+    ]);
 
     const addEdge = (from: string, to: string) => {
       if (!from || !to) return;
@@ -1006,7 +1150,44 @@ function buildGraphs(entries: VisualizerMemoryEntry[]): VisualizerGraph[] {
 
     if (Array.isArray(entry.value)) {
       const rows = entry.value;
+      const normalizedRows = rows.map((row) => toIndexedArray(row));
+
+      if (rowsLookLikeEdgePairs(entry.key, normalizedRows)) {
+        for (const row of normalizedRows) {
+          const from = toGraphNodeId(row[0]);
+          const to = toGraphNodeId(row[1]);
+          if (from && to) {
+            addEdge(from, to);
+          }
+        }
+      } else if (rowsLookLikeAdjacencyMatrix(normalizedRows)) {
+        normalizedRows.forEach((row, rowIndex) => {
+          row.forEach((cell, cellIndex) => {
+            if (Boolean(cell)) {
+              addEdge(String(rowIndex), String(cellIndex));
+            }
+          });
+        });
+      } else {
+        normalizedRows.forEach((row, rowIndex) => {
+          const from = String(rowIndex);
+          const neighbors =
+            row.length > 0
+              ? graphListNeighbors(row, degreeValues[rowIndex])
+              : toGraphNeighbors(rows[rowIndex]);
+          neighbors.forEach((neighbor) => addEdge(from, neighbor));
+        });
+      }
+
+      /*
+       * Legacy fallback for sparse array-like values that snapshot as objects
+       * rather than dense nested arrays.
+       */
       for (let index = 0; index < rows.length; index += 1) {
+        if (edges.length > 0) {
+          break;
+        }
+
         const from = String(index);
         const row = rows[index];
 
@@ -1044,7 +1225,11 @@ function buildGraphs(entries: VisualizerMemoryEntry[]): VisualizerGraph[] {
 
     const nodes = Array.from(nodeSet)
       .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
-      .map((id) => ({ id, label: id }));
+      .map((id) => ({
+        id,
+        label: id,
+        visited: indexedCompanionTruth(visitedValues, id)
+      }));
 
     graphs.push({
       id: `graph:${entry.key}`,
